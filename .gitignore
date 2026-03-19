@@ -1,0 +1,15 @@
+.vs/
+out/
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.log
+*.tlog
+*.user
+*.suo
+*.ninja
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
