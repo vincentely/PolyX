@@ -112,6 +112,41 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             continue;
         }
 
+        if (argument == "-s" || argument == "--size" || argument == "--atlas-size")
+        {
+            if (i + 1 >= argc)
+            {
+                if (errorMessage != nullptr)
+                {
+                    *errorMessage = "Missing value after size option.";
+                }
+                return false;
+            }
+
+            std::size_t parsed = 0;
+            if (!TryParseSizeT(argv[++i], parsed))
+            {
+                if (errorMessage != nullptr)
+                {
+                    *errorMessage = "Invalid value for size option.";
+                }
+                return false;
+            }
+
+            if (!IsPowerOfTwo(parsed))
+            {
+                if (errorMessage != nullptr)
+                {
+                    *errorMessage = "Size must be a power of two (e.g. 256, 512, 1024, 2048, 4096).";
+                }
+                return false;
+            }
+
+            config.requestedAtlasWidth = parsed;
+            config.requestedAtlasHeight = parsed;
+            continue;
+        }
+
         if (argument == "-w" || argument == "--width" || argument == "--atlas-width")
         {
             if (i + 1 >= argc)
@@ -210,6 +245,7 @@ void PrintUsage(std::ostream& os, const std::filesystem::path& executableName)
     os << "Usage: " << executableName.string() << " [options] [root-dir]\n"
        << "Options:\n"
        << "  --root <dir>             Root directory that contains input/ and output/\n"
+       << "  -s, --size <n>           Atlas size (width and height) in pixels, must be a power of two (default: 1024)\n"
        << "  -w, --width <n>          Atlas width in pixels (default: 1024)\n"
        << "  -h, --height <n>         Atlas height in pixels (default: 1024)\n"
        << "  -q, --quiet              Reduce console output\n"

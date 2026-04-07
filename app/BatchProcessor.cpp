@@ -376,14 +376,14 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
     const int atlasW = atlasBuilder.GetAtlasImage().width;
     const int atlasH = atlasBuilder.GetAtlasImage().height;
 
-    const auto remapUvCell = [&](double srcU, double srcV,
-                                  const uv::CellMapping& cm,
-                                  const atlas::AtlasEntry* entry) -> fbxsdk::FbxVector2
+    const auto remapUvRegion = [&](double srcU, double srcV,
+                                    const uv::RegionMapping& rm,
+                                    const atlas::AtlasEntry* entry) -> fbxsdk::FbxVector2
     {
         const double pixU = srcU * static_cast<double>(texW);
         const double pixV = (1.0 - srcV) * static_cast<double>(texH);
-        const double localU = (pixU - static_cast<double>(cm.tileOriginX)) / static_cast<double>(cm.tileWidth);
-        const double localV = (pixV - static_cast<double>(cm.tileOriginY)) / static_cast<double>(cm.tileHeight);
+        const double localU = (pixU - static_cast<double>(rm.originX)) / static_cast<double>(rm.width);
+        const double localV = (pixV - static_cast<double>(rm.originY)) / static_cast<double>(rm.height);
 
         const double halfTexelU = 0.5 / static_cast<double>(atlasW);
         const double halfTexelV = 0.5 / static_cast<double>(atlasH);
@@ -399,54 +399,17 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
         newAtlasV = std::clamp(newAtlasV, tileV0 + halfTexelV, tileV1 - halfTexelV);
 
         return fbxsdk::FbxVector2(newU, 1.0 - newAtlasV);
-    };
-
-    const auto remapUvStrip = [&](double srcU, double srcV,
-                                   const uv::PolyStripMapping& psm,
-                                   const atlas::AtlasEntry* entry) -> fbxsdk::FbxVector2
-    {
-        const double pixU = srcU * static_cast<double>(texW);
-        const double pixV = (1.0 - srcV) * static_cast<double>(texH);
-        const double localU = (pixU - static_cast<double>(psm.stripOriginX)) / static_cast<double>(psm.stripWidth);
-        const double localV = (pixV - static_cast<double>(psm.stripOriginY)) / static_cast<double>(psm.stripHeight);
-
-        const double halfTexelU = 0.5 / static_cast<double>(atlasW);
-        const double halfTexelV = 0.5 / static_cast<double>(atlasH);
-        const double tileU0 = static_cast<double>(entry->atlasRect.x) / static_cast<double>(atlasW);
-        const double tileU1 = static_cast<double>(entry->atlasRect.x + entry->atlasRect.width) / static_cast<double>(atlasW);
-        const double tileV0 = static_cast<double>(entry->atlasRect.y) / static_cast<double>(atlasH);
-        const double tileV1 = static_cast<double>(entry->atlasRect.y + entry->atlasRect.height) / static_cast<double>(atlasH);
-
-        double newU = tileU0 + std::clamp(localU, 0.0, 1.0) * (tileU1 - tileU0);
-        double newAtlasV = tileV0 + std::clamp(localV, 0.0, 1.0) * (tileV1 - tileV0);
-
-        newU = std::clamp(newU, tileU0 + halfTexelU, tileU1 - halfTexelU);
-        newAtlasV = std::clamp(newAtlasV, tileV0 + halfTexelV, tileV1 - halfTexelV);
-
-        return fbxsdk::FbxVector2(newU, 1.0 - newAtlasV);
-    };
-
-    const auto findMapping = [&](double srcU, double srcV)
-        -> std::pair<const uv::CellMapping*, const atlas::AtlasEntry*>
-    {
-        const int px = std::clamp(static_cast<int>(std::floor(srcU * static_cast<double>(texW))), 0, std::max(0, texW - 1));
-        const int py = std::clamp(static_cast<int>(std::floor((1.0 - srcV) * static_cast<double>(texH))), 0, std::max(0, texH - 1));
-        const uv::CellCoord coord{ (px / 8) * 8, (py / 8) * 8 };
-        const auto cellIt = filePlan.scenePlan.cellMap.find(coord);
-        if (cellIt == filePlan.scenePlan.cellMap.end())
-        {
-            return { nullptr, nullptr };
-        }
-        const uv::CellMapping& cm = cellIt->second;
-        const atlas::AtlasEntry* entry = atlasBuilder.FindEntry(cm.tileKey);
-        return { &cm, entry };
     };
 
     const std::size_t meshCount = std::min(meshes.size(), origMeshes.size());
+    const std::size_t planMeshCount = filePlan.scenePlan.meshes.size();
     for (std::size_t meshIndex = 0; meshIndex < meshCount; ++meshIndex)
     {
         fbxsdk::FbxMesh* mesh = meshes[meshIndex];
         const fbxsdk::FbxMesh* origMesh = origMeshes[meshIndex];
+
+        const uv::MeshPlan* meshPlanPtr = (meshIndex < planMeshCount)
+            ? &filePlan.scenePlan.meshes[meshIndex] : nullptr;
 
         for (int uvSetIndex = 0; uvSetIndex < origMesh->GetElementUVCount(); ++uvSetIndex)
         {
@@ -459,20 +422,31 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
 
             const auto& origDirectArray = origUvElement->GetDirectArray();
             auto& directArray = uvElement->GetDirectArray();
-            auto& indexArray = uvElement->GetIndexArray();
             const bool indexed = origUvElement->GetReferenceMode() == fbxsdk::FbxLayerElement::eIndexToDirect;
             const int directCount = origDirectArray.GetCount();
 
-            std::vector<int> remappedWithTile(directCount, -1);
+            std::vector<bool> dIdxWritten(directCount, false);
 
             int pvIdx = 0;
             for (int poly = 0; poly < origMesh->GetPolygonCount(); ++poly)
             {
                 const int polySize = origMesh->GetPolygonSize(poly);
 
-                struct PvInfo { int pvIndex; int dIdx; double u; double v; };
-                std::vector<PvInfo> pvs;
-                pvs.reserve(polySize);
+                int regionId = -1;
+                if (meshPlanPtr != nullptr &&
+                    poly < static_cast<int>(meshPlanPtr->polyToRegion.size()))
+                {
+                    regionId = meshPlanPtr->polyToRegion[poly];
+                }
+
+                const uv::RegionMapping* region = nullptr;
+                const atlas::AtlasEntry* entry = nullptr;
+                if (regionId >= 0 &&
+                    regionId < static_cast<int>(meshPlanPtr->regions.size()))
+                {
+                    region = &meshPlanPtr->regions[regionId];
+                    entry = atlasBuilder.FindEntry(region->tileKey);
+                }
 
                 for (int v = 0; v < polySize; ++v)
                 {
@@ -481,67 +455,20 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
                     {
                         dIdx = origUvElement->GetIndexArray().GetAt(pvIdx);
                     }
-                    if (dIdx >= 0 && dIdx < directCount)
-                    {
-                        const fbxsdk::FbxVector2 uv = origDirectArray.GetAt(dIdx);
-                        pvs.push_back({ pvIdx, dIdx, uv[0], uv[1] });
-                    }
                     ++pvIdx;
-                }
 
-                if (pvs.empty()) continue;
+                    if (dIdx < 0 || dIdx >= directCount) continue;
+                    if (region == nullptr || entry == nullptr) continue;
+                    if (dIdxWritten[dIdx]) continue;
 
-                const uv::PolyKey polyKey{ static_cast<int>(meshIndex), poly };
-                const auto stripIt = filePlan.scenePlan.polyStripMap.find(polyKey);
-
-                if (stripIt != filePlan.scenePlan.polyStripMap.end())
-                {
-                    const uv::PolyStripMapping& psm = stripIt->second;
-                    const atlas::AtlasEntry* entry = atlasBuilder.FindEntry(psm.tileKey);
-                    if (entry != nullptr)
-                    {
-                        const int tileId = static_cast<int>(entry - atlasBuilder.Entries().data());
-                        for (const PvInfo& pv : pvs)
-                        {
-                            const fbxsdk::FbxVector2 newUv = remapUvStrip(pv.u, pv.v, psm, entry);
-
-                            const int newDIdx = directArray.GetCount();
-                            directArray.Add(newUv);
-                            remappedWithTile.push_back(tileId);
-                            if (indexed) indexArray.SetAt(pv.pvIndex, newDIdx);
-                        }
-                    }
-                }
-                else
-                {
-                    for (const PvInfo& pv : pvs)
-                    {
-                        auto [cm, entry] = findMapping(pv.u, pv.v);
-                        if (cm == nullptr || entry == nullptr) continue;
-                        const int tileId = static_cast<int>(entry - atlasBuilder.Entries().data());
-
-                        if (remappedWithTile[pv.dIdx] == tileId) continue;
-
-                        const fbxsdk::FbxVector2 newUv = remapUvCell(pv.u, pv.v, *cm, entry);
-
-                        if (remappedWithTile[pv.dIdx] < 0)
-                        {
-                            directArray.SetAt(pv.dIdx, newUv);
-                            remappedWithTile[pv.dIdx] = tileId;
-                        }
-                        else
-                        {
-                            const int newDIdx = directArray.GetCount();
-                            directArray.Add(newUv);
-                            remappedWithTile.push_back(tileId);
-                            if (indexed) indexArray.SetAt(pv.pvIndex, newDIdx);
-                        }
-                    }
+                    const fbxsdk::FbxVector2 uv = origDirectArray.GetAt(dIdx);
+                    const fbxsdk::FbxVector2 newUv = remapUvRegion(uv[0], uv[1], *region, entry);
+                    directArray.SetAt(dIdx, newUv);
+                    dIdxWritten[dIdx] = true;
                 }
             }
         }
     }
-
     std::filesystem::path atlasRelativePath = RelativeTo(atlasOutputPath, filePlan.outputFbx.parent_path());
     ApplySceneMaterials(scene, atlasRelativePath, filePlan.scenePlan.primaryUvSetName);
     return true;
@@ -718,13 +645,13 @@ void BatchProcessor::VerifyExportedMesh(const FilePlan& filePlan, fbxsdk::FbxSce
                             {
                                 details << "\n  PV[" << curPv << "] poly=" << poly << " v=" << v
                                         << " src(" << oUv[0] << "," << oUv[1]
-                                        << ")¡úpx(" << srcPx << "," << srcPy
+                                        << ")ï¿½ï¿½px(" << srcPx << "," << srcPy
                                         << ") RGBA=(" << static_cast<int>(srcImg.pixels[srcOff])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 1])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 2])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 3])
                                         << ") | out(" << nUv[0] << "," << nUv[1]
-                                        << ")¡úpx(" << atPx << "," << atPy
+                                        << ")ï¿½ï¿½px(" << atPx << "," << atPy
                                         << ") RGBA=(" << static_cast<int>(atlasImg.pixels[atOff])
                                         << "," << static_cast<int>(atlasImg.pixels[atOff + 1])
                                         << "," << static_cast<int>(atlasImg.pixels[atOff + 2])

@@ -1,5 +1,6 @@
 .vs/
 out/
+build/
 dist/
 *.obj
 *.pdb
@@ -14,3 +15,4 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 compile_commands.json
+Bin/

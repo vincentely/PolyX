@@ -39,9 +39,20 @@ struct LayerPlan
     std::vector<TrianglePlan> triangles;
 };
 
+struct RegionMapping
+{
+    std::string tileKey;
+    int originX = 0;
+    int originY = 0;
+    int width = 0;
+    int height = 0;
+};
+
 struct MeshPlan
 {
     std::vector<LayerPlan> layers;
+    std::vector<RegionMapping> regions;
+    std::vector<int> polyToRegion;
 };
 
 struct TileCandidate
@@ -103,8 +114,6 @@ struct ScenePlan
 {
     std::vector<MeshPlan> meshes;
     std::vector<TileCandidate> uniqueTiles;
-    std::unordered_map<CellCoord, CellMapping, CellCoordHash> cellMap;
-    std::unordered_map<PolyKey, PolyStripMapping, PolyKeyHash> polyStripMap;
     std::string primaryUvSetName;
     std::size_t triangleCount = 0;
 };

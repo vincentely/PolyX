@@ -325,6 +325,44 @@ std::string BuildTileKey(const atlas::Image& image)
     return key;
 }
 
+class UnionFind
+{
+public:
+    explicit UnionFind(int n)
+        : parent_(n)
+        , rank_(n, 0)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            parent_[i] = i;
+        }
+    }
+
+    int Find(int x)
+    {
+        while (parent_[x] != x)
+        {
+            parent_[x] = parent_[parent_[x]];
+            x = parent_[x];
+        }
+        return x;
+    }
+
+    void Unite(int a, int b)
+    {
+        a = Find(a);
+        b = Find(b);
+        if (a == b) return;
+        if (rank_[a] < rank_[b]) std::swap(a, b);
+        parent_[b] = a;
+        if (rank_[a] == rank_[b]) ++rank_[a];
+    }
+
+private:
+    std::vector<int> parent_;
+    std::vector<int> rank_;
+};
+
 } // namespace
 
 ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
@@ -367,71 +405,6 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
         return key;
     };
 
-    const auto ensureCell = [&](int cellX, int cellY)
-    {
-        const CellCoord coord{ cellX, cellY };
-        if (result.cellMap.find(coord) != result.cellMap.end())
-        {
-            return;
-        }
-
-        const int texW = sourceTexture.width;
-        const int texH = sourceTexture.height;
-
-        const int vStripY = (cellY / 32) * 32;
-        if (vStripY + 32 <= texH)
-        {
-            const atlas::Rect vRect = MakeTileRect(cellX, vStripY, 8, 32, texW, texH);
-            const atlas::Image vImg = atlas::ExtractSubImage(sourceTexture, vRect, nullptr);
-            if (!vImg.Empty() && ScoreVerticalGradientStrip(vImg) > 0)
-            {
-                const std::string key = addTile(vRect);
-                if (!key.empty())
-                {
-                    for (int sy = vStripY; sy < vStripY + 32; sy += 8)
-                    {
-                        const CellCoord sc{ cellX, sy };
-                        if (result.cellMap.find(sc) == result.cellMap.end())
-                        {
-                            result.cellMap.emplace(sc, CellMapping{ key, vRect.x, vRect.y, 8, 32 });
-                        }
-                    }
-                    return;
-                }
-            }
-        }
-
-        const int hStripX = (cellX / 32) * 32;
-        if (hStripX + 32 <= texW)
-        {
-            const atlas::Rect hRect = MakeTileRect(hStripX, cellY, 32, 8, texW, texH);
-            const atlas::Image hImg = atlas::ExtractSubImage(sourceTexture, hRect, nullptr);
-            if (!hImg.Empty() && ScoreHorizontalGradientStrip(hImg) > 0)
-            {
-                const std::string key = addTile(hRect);
-                if (!key.empty())
-                {
-                    for (int sx = hStripX; sx < hStripX + 32; sx += 8)
-                    {
-                        const CellCoord sc{ sx, cellY };
-                        if (result.cellMap.find(sc) == result.cellMap.end())
-                        {
-                            result.cellMap.emplace(sc, CellMapping{ key, hRect.x, hRect.y, 32, 8 });
-                        }
-                    }
-                    return;
-                }
-            }
-        }
-
-        const atlas::Rect cellRect = MakeTileRect(cellX, cellY, 8, 8, texW, texH);
-        const std::string key = addTile(cellRect);
-        if (!key.empty())
-        {
-            result.cellMap.emplace(coord, CellMapping{ key, cellRect.x, cellRect.y, 8, 8 });
-        }
-    };
-
     int meshIdx = 0;
     for (fbxsdk::FbxMesh* mesh : meshes)
     {
@@ -465,34 +438,35 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
                 result.primaryUvSetName = uvSetName;
             }
 
+            LayerPlan layerPlan;
+            layerPlan.uvSetName = uvSetName;
+            meshPlan.layers.push_back(std::move(layerPlan));
+        }
+
+        // Region analysis on the first UV set
+        {
+            const fbxsdk::FbxGeometryElementUV* uvElement = mesh->GetElementUV(0);
+            if (uvElement == nullptr)
+            {
+                result.meshes.push_back(std::move(meshPlan));
+                ++meshIdx;
+                continue;
+            }
+
             const auto& directArray = uvElement->GetDirectArray();
             const auto& indexArray = uvElement->GetIndexArray();
             const bool indexed = uvElement->GetReferenceMode() == fbxsdk::FbxLayerElement::eIndexToDirect;
+            const int directCount = directArray.GetCount();
+            const int polyCount = mesh->GetPolygonCount();
 
-            for (int i = 0; i < directArray.GetCount(); ++i)
-            {
-                const fbxsdk::FbxVector2 uv = directArray.GetAt(i);
-                const UvPoint pt{ uv[0], uv[1] };
-                const auto [cellX, cellY] = QuantizeToBlockOrigin(pt, sourceTexture.width, sourceTexture.height);
-                ensureCell(cellX, cellY);
-            }
-
-            const int texW = sourceTexture.width;
-            const int texH = sourceTexture.height;
+            // Phase 1: Collect dIdx per polygon and build dIdx -> polygon adjacency
+            std::vector<std::vector<int>> polyDIdxSets(polyCount);
+            std::unordered_map<int, std::vector<int>> dIdxToPolys;
 
             int pvIdx = 0;
-            for (int poly = 0; poly < mesh->GetPolygonCount(); ++poly)
+            for (int poly = 0; poly < polyCount; ++poly)
             {
                 const int polySize = mesh->GetPolygonSize(poly);
-
-                int minCellX = std::numeric_limits<int>::max();
-                int minCellY = std::numeric_limits<int>::max();
-                int maxCellX = std::numeric_limits<int>::min();
-                int maxCellY = std::numeric_limits<int>::min();
-
-                std::vector<std::pair<int, int>> vertCells;
-                vertCells.reserve(polySize);
-
                 for (int v = 0; v < polySize; ++v)
                 {
                     int dIdx = pvIdx;
@@ -502,65 +476,87 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
                     }
                     ++pvIdx;
 
-                    if (dIdx < 0 || dIdx >= directArray.GetCount())
-                    {
-                        continue;
-                    }
+                    if (dIdx < 0 || dIdx >= directCount) continue;
 
-                    const fbxsdk::FbxVector2 uv = directArray.GetAt(dIdx);
-                    const UvPoint pt{ uv[0], uv[1] };
-                    const auto [cx, cy] = QuantizeToBlockOrigin(pt, texW, texH);
-                    vertCells.emplace_back(cx, cy);
-
-                    minCellX = std::min(minCellX, cx);
-                    minCellY = std::min(minCellY, cy);
-                    maxCellX = std::max(maxCellX, cx);
-                    maxCellY = std::max(maxCellY, cy);
-                }
-
-                if (vertCells.empty())
-                {
-                    continue;
-                }
-
-                const bool sameCell = (minCellX == maxCellX && minCellY == maxCellY);
-                if (sameCell)
-                {
-                    continue;
-                }
-
-                const int stripX = minCellX;
-                const int stripY = minCellY;
-                const int stripW = maxCellX + 8 - minCellX;
-                const int stripH = maxCellY + 8 - minCellY;
-
-                const int clampedX = std::clamp(stripX, 0, std::max(0, texW - stripW));
-                const int clampedY = std::clamp(stripY, 0, std::max(0, texH - stripH));
-                const int clampedW = std::min(stripW, texW - clampedX);
-                const int clampedH = std::min(stripH, texH - clampedY);
-
-                if (clampedW <= 0 || clampedH <= 0)
-                {
-                    continue;
-                }
-
-                const atlas::Rect stripRect{ clampedX, clampedY, clampedW, clampedH };
-                const std::string stripKey = addTile(stripRect);
-                if (!stripKey.empty())
-                {
-                    PolyStripMapping psm;
-                    psm.tileKey = stripKey;
-                    psm.stripOriginX = clampedX;
-                    psm.stripOriginY = clampedY;
-                    psm.stripWidth = clampedW;
-                    psm.stripHeight = clampedH;
-                    result.polyStripMap.emplace(PolyKey{ meshIdx, poly }, std::move(psm));
+                    polyDIdxSets[poly].push_back(dIdx);
+                    dIdxToPolys[dIdx].push_back(poly);
                 }
             }
 
-            LayerPlan layerPlan;
-            layerPlan.uvSetName = uvSetName;
-            meshPlan.layers.push_back(std::move(layerPlan));
+            // Phase 2: Union-Find to group polygons sharing dIdx
+            UnionFind uf(polyCount);
+            for (const auto& [dIdx, polys] : dIdxToPolys)
+            {
+                for (std::size_t i = 1; i < polys.size(); ++i)
+                {
+                    uf.Unite(polys[0], polys[i]);
+                }
+            }
+
+            // Phase 3: Group polygons by region root
+            std::unordered_map<int, std::vector<int>> regionPolys;
+            for (int poly = 0; poly < polyCount; ++poly)
+            {
+                if (polyDIdxSets[poly].empty()) continue;
+                const int root = uf.Find(poly);
+                regionPolys[root].push_back(poly);
+            }
+
+            // Phase 4: For each region, compute bounding rect and create tile
+            meshPlan.polyToRegion.assign(polyCount, -1);
+
+            const int texW = sourceTexture.width;
+            const int texH = sourceTexture.height;
+
+            for (const auto& [root, polys] : regionPolys)
+            {
+                int minCellX = std::numeric_limits<int>::max();
+                int minCellY = std::numeric_limits<int>::max();
+                int maxCellX = std::numeric_limits<int>::min();
+                int maxCellY = std::numeric_limits<int>::min();
+
+                for (int poly : polys)
+                {
+                    for (int dIdx : polyDIdxSets[poly])
+                    {
+                        const fbxsdk::FbxVector2 uv = directArray.GetAt(dIdx);
+                        const UvPoint pt{ uv[0], uv[1] };
+                        const auto [cx, cy] = QuantizeToBlockOrigin(pt, texW, texH);
+                        minCellX = std::min(minCellX, cx);
+                        minCellY = std::min(minCellY, cy);
+                        maxCellX = std::max(maxCellX, cx);
+                        maxCellY = std::max(maxCellY, cy);
+                    }
+                }
+
+                const int rectW = maxCellX + 8 - minCellX;
+                const int rectH = maxCellY + 8 - minCellY;
+
+                const int clampedX = std::clamp(minCellX, 0, std::max(0, texW - rectW));
+                const int clampedY = std::clamp(minCellY, 0, std::max(0, texH - rectH));
+                const int clampedW = std::min(rectW, texW - clampedX);
+                const int clampedH = std::min(rectH, texH - clampedY);
+
+                if (clampedW <= 0 || clampedH <= 0) continue;
+
+                const atlas::Rect regionRect{ clampedX, clampedY, clampedW, clampedH };
+                const std::string tileKey = addTile(regionRect);
+                if (tileKey.empty()) continue;
+
+                const int regionId = static_cast<int>(meshPlan.regions.size());
+                RegionMapping rm;
+                rm.tileKey = tileKey;
+                rm.originX = clampedX;
+                rm.originY = clampedY;
+                rm.width = clampedW;
+                rm.height = clampedH;
+                meshPlan.regions.push_back(std::move(rm));
+
+                for (int poly : polys)
+                {
+                    meshPlan.polyToRegion[poly] = regionId;
+                }
+            }
         }
 
         result.meshes.push_back(std::move(meshPlan));
