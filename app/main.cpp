@@ -80,8 +80,15 @@ int main(int argc, char* argv[])
     polyx::core::NormalizeAtlasDimensions(config);
 
     polyx::core::Logger logger(std::cout);
-    logger.Info("Atlas target size: requested " + std::to_string(config.requestedAtlasWidth) + "x" + std::to_string(config.requestedAtlasHeight) +
-                ", normalized " + std::to_string(config.atlasWidth) + "x" + std::to_string(config.atlasHeight));
+    if (config.autoAtlasSize)
+    {
+        logger.Info("Atlas target size: auto smallest power-of-two square");
+    }
+    else
+    {
+        logger.Info("Atlas target size: requested " + std::to_string(config.requestedAtlasWidth) + "x" + std::to_string(config.requestedAtlasHeight) +
+                    ", normalized " + std::to_string(config.atlasWidth) + "x" + std::to_string(config.atlasHeight));
+    }
 
     polyx::app::BatchProcessor processor(config, logger);
     const bool ok = processor.Run();

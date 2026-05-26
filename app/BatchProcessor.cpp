@@ -82,6 +82,7 @@ bool BatchProcessor::Run()
     uv::UVAnalyzer analyzer;
     std::vector<FilePlan> filePlans;
     atlas::AtlasBuilder atlasBuilder(static_cast<int>(config_.atlasWidth), static_cast<int>(config_.atlasHeight));
+    atlasBuilder.SetAutoSize(config_.autoAtlasSize);
     bool hadFatalError = false;
 
     for (const PackageInfo& package : packages)
@@ -295,6 +296,8 @@ bool BatchProcessor::BuildAtlas(const std::vector<FilePlan>& filePlans,
     }
 
     logger_.Info("Atlas saved to: " + atlasOutputPath.string());
+    logger_.Info("Atlas output size: " + std::to_string(atlasBuilder.GetAtlasImage().width) + "x" +
+                 std::to_string(atlasBuilder.GetAtlasImage().height));
     return true;
 }
 

@@ -47,6 +47,8 @@ public:
     void SetTargetSize(int targetWidth, int targetHeight);
     int TargetWidth() const;
     int TargetHeight() const;
+    void SetAutoSize(bool autoSize);
+    bool AutoSize() const;
 
     bool AddTile(const std::string& key, const Image& image, const Rect& sourceRect, std::string* errorMessage = nullptr);
     bool Build(std::string* errorMessage = nullptr);
@@ -63,8 +65,16 @@ private:
         Rect sourceRect;
     };
 
+    bool CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetSize, std::string* errorMessage) const;
+    bool PackTiles(const std::vector<std::size_t>& order,
+                   int targetWidth,
+                   int targetHeight,
+                   std::vector<AtlasEntry>* packedEntries,
+                   std::string* errorMessage) const;
+
     int targetWidth_ = 1024;
     int targetHeight_ = 1024;
+    bool autoSize_ = false;
     bool built_ = false;
     std::vector<PendingTile> tiles_;
     std::unordered_map<std::string, std::size_t> tileIndexByKey_;

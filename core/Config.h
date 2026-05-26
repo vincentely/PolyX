@@ -16,6 +16,7 @@ struct AppConfig
     std::size_t requestedAtlasHeight = 1024;
     std::size_t atlasWidth = 1024;
     std::size_t atlasHeight = 1024;
+    bool autoAtlasSize = true;
     bool showHelp = false;
     bool verbose = true;
 };

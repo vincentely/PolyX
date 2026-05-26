@@ -66,6 +66,11 @@ void ApplyRootDirectory(AppConfig& config, const std::filesystem::path& rootDir)
 
 void NormalizeAtlasDimensions(AppConfig& config)
 {
+    if (config.autoAtlasSize)
+    {
+        return;
+    }
+
     config.atlasWidth = config.requestedAtlasWidth;
     config.atlasHeight = config.requestedAtlasHeight;
 
@@ -112,6 +117,12 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             continue;
         }
 
+        if (argument == "--auto-size" || argument == "--auto-atlas-size")
+        {
+            config.autoAtlasSize = true;
+            continue;
+        }
+
         if (argument == "-s" || argument == "--size" || argument == "--atlas-size")
         {
             if (i + 1 >= argc)
@@ -144,6 +155,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
 
             config.requestedAtlasWidth = parsed;
             config.requestedAtlasHeight = parsed;
+            config.autoAtlasSize = false;
             continue;
         }
 
@@ -169,6 +181,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             }
 
             config.requestedAtlasWidth = parsed;
+            config.autoAtlasSize = false;
             continue;
         }
 
@@ -194,6 +207,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             }
 
             config.requestedAtlasHeight = parsed;
+            config.autoAtlasSize = false;
             continue;
         }
 
@@ -245,9 +259,11 @@ void PrintUsage(std::ostream& os, const std::filesystem::path& executableName)
     os << "Usage: " << executableName.string() << " [options] [root-dir]\n"
        << "Options:\n"
        << "  --root <dir>             Root directory that contains input/ and output/\n"
-       << "  -s, --size <n>           Atlas size (width and height) in pixels, must be a power of two (default: 1024)\n"
-       << "  -w, --width <n>          Atlas width in pixels (default: 1024)\n"
-       << "  -h, --height <n>         Atlas height in pixels (default: 1024)\n"
+       << "  --auto-size              Use the smallest power-of-two square that fits all tiles (default)\n"
+       << "  -s, --size <n>           Fixed atlas size (width and height) in pixels, must be a power of two\n"
+       << "  -w, --width <n>          Fixed atlas width in pixels\n"
+       << "  -h, --height <n>         Fixed atlas height in pixels\n"
+       << "                           Defaults to the smallest power-of-two square that fits all tiles\n"
        << "  -q, --quiet              Reduce console output\n"
        << "  --help                   Show this help message\n";
 }

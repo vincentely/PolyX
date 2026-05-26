@@ -2,7 +2,9 @@
 #include "atlas/TgaLoader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -98,6 +100,59 @@ bool GetEncoderClsid(const wchar_t* mimeType, CLSID& clsid)
 std::wstring ToWidePath(const std::filesystem::path& path)
 {
     return path.wstring();
+}
+
+std::uint64_t CeilSqrt(std::uint64_t value)
+{
+    if (value <= 1U)
+    {
+        return value;
+    }
+
+    const auto squareLessThan = [](std::uint64_t side, std::uint64_t area)
+    {
+        return side < area / side || (side == area / side && area % side != 0U);
+    };
+
+    std::uint64_t root = static_cast<std::uint64_t>(std::sqrt(static_cast<long double>(value)));
+    while (squareLessThan(root, value))
+    {
+        ++root;
+    }
+    while (root > 1U)
+    {
+        const std::uint64_t smaller = root - 1U;
+        const std::uint64_t ceilQuotient = (value / smaller) + (value % smaller == 0U ? 0U : 1U);
+        if (smaller < ceilQuotient)
+        {
+            break;
+        }
+        --root;
+    }
+    return root;
+}
+
+bool RoundUpToPowerOfTwoInt(std::uint64_t value, int& result)
+{
+    constexpr int kMaxPowerOfTwoInt = 1 << 30;
+    if (value <= 1U)
+    {
+        result = 1;
+        return true;
+    }
+
+    std::uint64_t size = 1U;
+    while (size < value)
+    {
+        size <<= 1U;
+        if (size > static_cast<std::uint64_t>(kMaxPowerOfTwoInt))
+        {
+            return false;
+        }
+    }
+
+    result = static_cast<int>(size);
+    return true;
 }
 
 } // namespace
@@ -353,6 +408,7 @@ void AtlasBuilder::SetTargetSize(int targetWidth, int targetHeight)
 {
     targetWidth_ = targetWidth;
     targetHeight_ = targetHeight;
+    autoSize_ = false;
     built_ = false;
 }
 
@@ -364,6 +420,17 @@ int AtlasBuilder::TargetWidth() const
 int AtlasBuilder::TargetHeight() const
 {
     return targetHeight_;
+}
+
+void AtlasBuilder::SetAutoSize(bool autoSize)
+{
+    autoSize_ = autoSize;
+    built_ = false;
+}
+
+bool AtlasBuilder::AutoSize() const
+{
+    return autoSize_;
 }
 
 bool AtlasBuilder::AddTile(const std::string& key, const Image& image, const Rect& sourceRect, std::string* errorMessage)
@@ -411,22 +478,63 @@ bool AtlasBuilder::AddTile(const std::string& key, const Image& image, const Rec
     return true;
 }
 
-bool AtlasBuilder::Build(std::string* errorMessage)
+bool AtlasBuilder::CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetSize, std::string* errorMessage) const
 {
-    entries_.clear();
-    entryIndexByKey_.clear();
-    atlasImage_ = Image{};
+    std::uint64_t totalArea = 0U;
+    int maxTileDimension = 1;
+    for (const PendingTile& tile : tiles_)
+    {
+        maxTileDimension = std::max(maxTileDimension, std::max(tile.image.width, tile.image.height));
+        const std::uint64_t tileArea = static_cast<std::uint64_t>(tile.image.width) * static_cast<std::uint64_t>(tile.image.height);
+        if (tileArea > std::numeric_limits<std::uint64_t>::max() - totalArea)
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Atlas tile area is too large.";
+            }
+            return false;
+        }
+        totalArea += tileArea;
+    }
 
-    if (tiles_.empty())
+    const std::uint64_t minimumSide = std::max<std::uint64_t>(static_cast<std::uint64_t>(maxTileDimension), CeilSqrt(totalArea));
+    int candidateSize = 0;
+    if (!RoundUpToPowerOfTwoInt(minimumSide, candidateSize))
     {
         if (errorMessage != nullptr)
         {
-            *errorMessage = "No tiles were added to the atlas builder.";
+            *errorMessage = "Auto atlas size exceeds supported dimensions.";
         }
         return false;
     }
 
-    if (targetWidth_ <= 0 || targetHeight_ <= 0)
+    while (true)
+    {
+        if (PackTiles(order, candidateSize, candidateSize, nullptr, nullptr))
+        {
+            targetSize = candidateSize;
+            return true;
+        }
+
+        if (candidateSize > (1 << 29))
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Auto atlas size exceeds supported dimensions.";
+            }
+            return false;
+        }
+        candidateSize *= 2;
+    }
+}
+
+bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
+                             int targetWidth,
+                             int targetHeight,
+                             std::vector<AtlasEntry>* packedEntries,
+                             std::string* errorMessage) const
+{
+    if (targetWidth <= 0 || targetHeight <= 0)
     {
         if (errorMessage != nullptr)
         {
@@ -435,27 +543,6 @@ bool AtlasBuilder::Build(std::string* errorMessage)
         return false;
     }
 
-    std::vector<std::size_t> order(tiles_.size());
-    for (std::size_t i = 0; i < order.size(); ++i)
-    {
-        order[i] = i;
-    }
-
-    std::sort(order.begin(), order.end(), [&](std::size_t lhs, std::size_t rhs)
-    {
-        const PendingTile& a = tiles_[lhs];
-        const PendingTile& b = tiles_[rhs];
-        if (a.image.height != b.image.height)
-        {
-            return a.image.height > b.image.height;
-        }
-        if (a.image.width != b.image.width)
-        {
-            return a.image.width > b.image.width;
-        }
-        return a.key < b.key;
-    });
-
     int rowX = 0;
     int rowY = 0;
     int rowHeight = 0;
@@ -463,7 +550,7 @@ bool AtlasBuilder::Build(std::string* errorMessage)
     for (const std::size_t index : order)
     {
         const PendingTile& tile = tiles_[index];
-        if (tile.image.width > targetWidth_)
+        if (tile.image.width > targetWidth)
         {
             if (errorMessage != nullptr)
             {
@@ -492,11 +579,73 @@ bool AtlasBuilder::Build(std::string* errorMessage)
         entry.key = tile.key;
         entry.sourceRect = tile.sourceRect;
         entry.atlasRect = Rect{ rowX, rowY, tile.image.width, tile.image.height };
-        entryIndexByKey_.emplace(entry.key, entries_.size());
-        entries_.push_back(std::move(entry));
+        if (packedEntries != nullptr)
+        {
+            packedEntries->push_back(std::move(entry));
+        }
 
         rowX += tile.image.width;
         rowHeight = std::max(rowHeight, tile.image.height);
+    }
+
+    return true;
+}
+
+bool AtlasBuilder::Build(std::string* errorMessage)
+{
+    entries_.clear();
+    entryIndexByKey_.clear();
+    atlasImage_ = Image{};
+
+    if (tiles_.empty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "No tiles were added to the atlas builder.";
+        }
+        return false;
+    }
+
+    std::vector<std::size_t> order(tiles_.size());
+    for (std::size_t i = 0; i < order.size(); ++i)
+    {
+        order[i] = i;
+    }
+
+    std::sort(order.begin(), order.end(), [&](std::size_t lhs, std::size_t rhs)
+    {
+        const PendingTile& a = tiles_[lhs];
+        const PendingTile& b = tiles_[rhs];
+        if (a.image.height != b.image.height)
+        {
+            return a.image.height > b.image.height;
+        }
+        if (a.image.width != b.image.width)
+        {
+            return a.image.width > b.image.width;
+        }
+        return a.key < b.key;
+    });
+
+    if (autoSize_)
+    {
+        int targetSize = 0;
+        if (!CalculateAutoTargetSize(order, targetSize, errorMessage))
+        {
+            return false;
+        }
+        targetWidth_ = targetSize;
+        targetHeight_ = targetSize;
+    }
+
+    if (!PackTiles(order, targetWidth_, targetHeight_, &entries_, errorMessage))
+    {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < entries_.size(); ++i)
+    {
+        entryIndexByKey_.emplace(entries_[i].key, i);
     }
 
     atlasImage_.width = targetWidth_;
