@@ -1,4 +1,3 @@
-#include <conio.h>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -6,6 +5,7 @@
 
 #include "app/BatchProcessor.h"
 #include "core/Config.h"
+#include "core/Console.h"
 #include "core/Logger.h"
 
 namespace
@@ -36,7 +36,7 @@ void PauseForKeyPress()
 
     std::cout << "\nPress any key to exit...";
     std::cout.flush();
-    (void)_getch();
+    polyx::core::WaitForAnyKey();
     std::cout << '\n';
 }
 } // namespace

@@ -130,10 +130,12 @@ add_executable(PolyX
   app/main.cpp
   app/BatchProcessor.cpp
   core/Config.cpp
+  core/Console.cpp
   core/Logger.cpp
   fbx/FbxLoader.cpp
   uv/UVAnalyzer.cpp
   atlas/AtlasBuilder.cpp
+  atlas/ImageBackend_Windows.cpp
   atlas/TgaLoader.cpp)
 
 target_include_directories(PolyX PRIVATE "${PROJECT_SOURCE_DIR}")
@@ -161,6 +163,7 @@ add_executable(PolyXTests
   core/Config.cpp
   core/Logger.cpp
   atlas/AtlasBuilder.cpp
+  atlas/ImageBackend_Windows.cpp
   atlas/TgaLoader.cpp)
 
 target_include_directories(PolyXTests PRIVATE "${PROJECT_SOURCE_DIR}")
