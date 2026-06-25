@@ -2,8 +2,10 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
 
 #include "app/BatchProcessor.h"
+#include "app/Manifest.h"
 #include "core/Config.h"
 #include "core/Console.h"
 #include "core/Logger.h"
@@ -39,6 +41,17 @@ void PauseForKeyPress()
     polyx::core::WaitForAnyKey();
     std::cout << '\n';
 }
+
+std::filesystem::path ExeDir(const std::filesystem::path& arg0)
+{
+    std::error_code ec;
+    const std::filesystem::path abs = std::filesystem::absolute(arg0, ec);
+    if (ec || abs.empty())
+    {
+        return std::filesystem::current_path();
+    }
+    return abs.parent_path();
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -59,6 +72,45 @@ int main(int argc, char* argv[])
     {
         polyx::core::PrintUsage(std::cout, executableName);
         return 0;
+    }
+
+    if (!config.manifestPath.empty())
+    {
+        polyx::core::Logger logger(std::cout);
+
+        polyx::manifest::Request request;
+        std::string manifestError;
+        if (!polyx::manifest::ReadRequest(config.manifestPath, request, &manifestError))
+        {
+            logger.Error("Failed to read manifest: " + manifestError);
+            PauseForKeyPress();
+            return 1;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path jsonDir = std::filesystem::absolute(config.manifestPath, ec).parent_path();
+        const std::filesystem::path outputDir = ExeDir(executableName) / "output";
+
+        logger.Info("Manifest: " + config.manifestPath.string() + " (" + std::to_string(request.items.size()) + " items)");
+        logger.Info("Output dir: " + outputDir.string());
+
+        polyx::app::BatchProcessor processor(config, logger);
+        polyx::manifest::Result result;
+        const bool ok = processor.RunManifest(request, jsonDir, outputDir, result);
+
+        const std::filesystem::path resultPath = outputDir / "result.json";
+        std::string resultError;
+        if (!polyx::manifest::WriteResult(resultPath, result, &resultError))
+        {
+            logger.Error("Failed to write result: " + resultError);
+        }
+        else
+        {
+            logger.Info("Result written: " + resultPath.string());
+        }
+
+        PauseForKeyPress();
+        return ok ? 0 : 1;
     }
 
     if (argc == 1)

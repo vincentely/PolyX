@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "app/Manifest.h"
 #include "atlas/AtlasBuilder.h"
 #include "core/Config.h"
 #include "core/Logger.h"
@@ -18,7 +19,15 @@ class BatchProcessor
 public:
     BatchProcessor(const core::AppConfig& config, core::Logger& logger);
 
+    // Folder mode: discover input/ packages and write to output/.
     bool Run();
+
+    // Manifest mode: process the request, writing FBXs + atlas under outputDir
+    // (FBX paths mirror their manifest-relative layout) and filling `result`.
+    bool RunManifest(const manifest::Request& request,
+                     const std::filesystem::path& jsonDir,
+                     const std::filesystem::path& outputDir,
+                     manifest::Result& result);
 
 private:
     struct PackageInfo
@@ -48,7 +57,7 @@ private:
 
     bool BuildAtlas(const std::vector<FilePlan>& filePlans,
                     atlas::AtlasBuilder& atlasBuilder,
-                    std::filesystem::path& atlasOutputPath);
+                    const std::filesystem::path& atlasOutputPath);
 
     bool ExportScenes(const std::vector<FilePlan>& filePlans,
                       const atlas::AtlasBuilder& atlasBuilder,

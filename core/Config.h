@@ -12,6 +12,7 @@ struct AppConfig
     std::filesystem::path rootDir = "Bin";
     std::filesystem::path inputDir = rootDir / "input";
     std::filesystem::path outputDir = rootDir / "output";
+    std::filesystem::path manifestPath; // if set (a .json arg), run manifest mode
     std::size_t requestedAtlasWidth = 1024;
     std::size_t requestedAtlasHeight = 1024;
     std::size_t atlasWidth = 1024;

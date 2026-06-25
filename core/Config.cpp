@@ -1,5 +1,6 @@
 #include "core/Config.h"
 
+#include <cctype>
 #include <cstdlib>
 #include <limits>
 #include <string>
@@ -234,6 +235,17 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
                 *errorMessage = "Unknown option: " + argument;
             }
             return false;
+        }
+
+        std::string lowerExt = std::filesystem::path(argument).extension().string();
+        for (char& ch : lowerExt)
+        {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (lowerExt == ".json")
+        {
+            config.manifestPath = argument;
+            continue;
         }
 
         if (!rootSet)

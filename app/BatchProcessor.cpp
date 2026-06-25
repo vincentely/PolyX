@@ -49,6 +49,46 @@ std::string ToGenericString(const std::filesystem::path& path)
     return path.generic_string();
 }
 
+std::string ToUtf8(const std::filesystem::path& path)
+{
+    return path.u8string();
+}
+
+void ParseAtlasSize(const std::string& text, bool& autoSize, int& width, int& height)
+{
+    autoSize = true;
+    width = 1024;
+    height = 1024;
+    if (text.empty() || text == "auto")
+    {
+        return;
+    }
+
+    const auto toInt = [](const std::string& token, int fallback) -> int
+    {
+        try
+        {
+            return std::max(1, std::stoi(token));
+        }
+        catch (...)
+        {
+            return fallback;
+        }
+    };
+
+    const std::size_t xPos = text.find('x');
+    if (xPos != std::string::npos)
+    {
+        width = toInt(text.substr(0, xPos), 1024);
+        height = toInt(text.substr(xPos + 1), 1024);
+    }
+    else
+    {
+        width = height = toInt(text, 1024);
+    }
+    autoSize = false;
+}
+
 } // namespace
 
 BatchProcessor::BatchProcessor(const core::AppConfig& config, core::Logger& logger)
@@ -136,7 +176,7 @@ bool BatchProcessor::Run()
         return false;
     }
 
-    std::filesystem::path atlasOutputPath;
+    const std::filesystem::path atlasOutputPath = config_.outputDir / "atlas.png";
     if (!BuildAtlas(filePlans, atlasBuilder, atlasOutputPath))
     {
         return false;
@@ -145,6 +185,197 @@ bool BatchProcessor::Run()
     if (!ExportScenes(filePlans, atlasBuilder, atlasOutputPath))
     {
         hadFatalError = true;
+    }
+
+    if (logger_.WarningCount() > 0)
+    {
+        logger_.Info("Warnings emitted: " + std::to_string(logger_.WarningCount()));
+    }
+
+    return !hadFatalError;
+}
+
+bool BatchProcessor::RunManifest(const manifest::Request& request,
+                                 const std::filesystem::path& jsonDir,
+                                 const std::filesystem::path& outputDir,
+                                 manifest::Result& result)
+{
+    bool autoSize = true;
+    int atlasW = 1024;
+    int atlasH = 1024;
+    ParseAtlasSize(request.atlasSize, autoSize, atlasW, atlasH);
+
+    std::filesystem::create_directories(outputDir);
+    const std::filesystem::path atlasOutputPath = outputDir / "atlas.png";
+
+    result = manifest::Result{};
+    result.atlasOut = ToUtf8(atlasOutputPath);
+    result.items.resize(request.items.size());
+    for (std::size_t i = 0; i < request.items.size(); ++i)
+    {
+        const manifest::RequestItem& item = request.items[i];
+        result.items[i].fbx = item.fbx;
+        result.items[i].nodePath = item.nodePath;
+        result.items[i].mesh = item.mesh;
+        result.items[i].status = "error";
+        result.items[i].detail = "unprocessed";
+    }
+
+    // Group palette items by absolute FBX path (preserving first-seen order).
+    struct Group
+    {
+        std::filesystem::path absFbx;
+        std::filesystem::path relFbx;
+        std::filesystem::path absTexture;
+        std::vector<std::size_t> items;
+    };
+    std::vector<Group> groups;
+    std::unordered_map<std::string, std::size_t> groupByFbx;
+
+    for (std::size_t i = 0; i < request.items.size(); ++i)
+    {
+        const manifest::RequestItem& item = request.items[i];
+        if (item.textureKind != "palette")
+        {
+            result.items[i].status = "skipped";
+            result.items[i].detail = "kind:" + (item.textureKind.empty() ? std::string("none") : item.textureKind);
+            continue;
+        }
+
+        const std::filesystem::path absFbx = (jsonDir / std::filesystem::u8path(item.fbx)).lexically_normal();
+        const std::filesystem::path absTexture = (jsonDir / std::filesystem::u8path(item.texture)).lexically_normal();
+        const std::string key = ToUtf8(absFbx);
+
+        const auto found = groupByFbx.find(key);
+        if (found == groupByFbx.end())
+        {
+            Group group;
+            group.absFbx = absFbx;
+            group.relFbx = std::filesystem::u8path(item.fbx);
+            group.absTexture = absTexture;
+            group.items.push_back(i);
+            groupByFbx.emplace(key, groups.size());
+            groups.push_back(std::move(group));
+        }
+        else
+        {
+            Group& group = groups[found->second];
+            if (absTexture != group.absTexture)
+            {
+                result.warnings.push_back("Multiple textures for FBX '" + item.fbx + "'; using the first.");
+                result.items[i].status = "warn";
+                result.items[i].detail = "multi-texture-per-fbx";
+            }
+            group.items.push_back(i);
+        }
+    }
+
+    uv::UVAnalyzer analyzer;
+    std::vector<FilePlan> filePlans;
+    atlas::AtlasBuilder atlasBuilder(atlasW, atlasH);
+    atlasBuilder.SetAutoSize(autoSize);
+    bool hadFatalError = false;
+
+    std::unordered_map<std::string, atlas::Image> textureCache;
+
+    for (Group& group : groups)
+    {
+        const std::string texKey = ToUtf8(group.absTexture);
+        atlas::Image* texturePtr = nullptr;
+        if (const auto it = textureCache.find(texKey); it != textureCache.end())
+        {
+            texturePtr = &it->second;
+        }
+        else
+        {
+            atlas::Image image;
+            std::string textureError;
+            if (!atlas::LoadImageFile(group.absTexture, image, &textureError))
+            {
+                logger_.Error("Failed to load texture: " + group.absTexture.string() + " | " + textureError);
+                for (const std::size_t idx : group.items)
+                {
+                    result.items[idx].status = "error";
+                    result.items[idx].detail = "texture-load";
+                }
+                hadFatalError = true;
+                continue;
+            }
+            texturePtr = &textureCache.emplace(texKey, std::move(image)).first->second;
+        }
+
+        if (config_.verbose)
+        {
+            logger_.Info("Analyzing FBX: " + group.absFbx.string());
+        }
+
+        auto loaderPtr = std::make_unique<fbx::FbxLoader>();
+        std::string fbxError;
+        if (!loaderPtr->Load(group.absFbx, &fbxError))
+        {
+            logger_.Error("Failed to load FBX: " + group.absFbx.string() + " | " + fbxError);
+            for (const std::size_t idx : group.items)
+            {
+                result.items[idx].status = "error";
+                result.items[idx].detail = "fbx-load";
+            }
+            hadFatalError = true;
+            continue;
+        }
+
+        uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loaderPtr->Scene(), *texturePtr, logger_);
+        for (const uv::TileCandidate& tile : scenePlan.uniqueTiles)
+        {
+            std::string tileError;
+            if (!atlasBuilder.AddTile(tile.key, tile.image, tile.sourceRect, &tileError))
+            {
+                logger_.Error("Failed to add atlas tile from " + group.absFbx.string() + " | " + tileError);
+                hadFatalError = true;
+            }
+        }
+
+        const std::string uvSet = scenePlan.primaryUvSetName;
+        const std::filesystem::path outputFbx = outputDir / group.relFbx;
+
+        FilePlan filePlan;
+        filePlan.inputFbx = group.absFbx;
+        filePlan.outputFbx = outputFbx;
+        filePlan.sourceTexturePath = group.absTexture;
+        filePlan.sourceTexture = *texturePtr;
+        filePlan.scenePlan = std::move(scenePlan);
+        filePlan.originalLoader = std::move(loaderPtr);
+        filePlans.push_back(std::move(filePlan));
+
+        for (const std::size_t idx : group.items)
+        {
+            if (result.items[idx].status != "warn")
+            {
+                result.items[idx].status = "ok";
+                result.items[idx].detail.clear();
+            }
+            result.items[idx].outputFbx = ToUtf8(outputFbx);
+            result.items[idx].uvSet = uvSet;
+        }
+    }
+
+    if (filePlans.empty())
+    {
+        logger_.Error("No FBX entries could be analyzed from the manifest.");
+        return false;
+    }
+
+    if (!BuildAtlas(filePlans, atlasBuilder, atlasOutputPath))
+    {
+        return false;
+    }
+
+    result.atlasWidth = atlasBuilder.GetAtlasImage().width;
+    result.atlasHeight = atlasBuilder.GetAtlasImage().height;
+
+    if (!ExportScenes(filePlans, atlasBuilder, atlasOutputPath))
+    {
+        hadFatalError = true;
+        result.warnings.push_back("Some FBX exports failed; see log.");
     }
 
     if (logger_.WarningCount() > 0)
@@ -273,14 +504,10 @@ std::filesystem::path BatchProcessor::MakeOutputPath(const std::filesystem::path
 
 bool BatchProcessor::BuildAtlas(const std::vector<FilePlan>& filePlans,
                                 atlas::AtlasBuilder& atlasBuilder,
-                                std::filesystem::path& atlasOutputPath)
+                                const std::filesystem::path& atlasOutputPath)
 {
-    atlasOutputPath = config_.outputDir / "atlas.png";
-
-    if (!std::filesystem::exists(config_.outputDir))
-    {
-        std::filesystem::create_directories(config_.outputDir);
-    }
+    (void)filePlans;
+    std::filesystem::create_directories(atlasOutputPath.parent_path());
 
     std::string buildError;
     if (!atlasBuilder.Build(&buildError))
