@@ -307,6 +307,20 @@ void TestConfigParsing()
     {
         core::AppConfig config;
         std::string error;
+        CHECK(ParseArgs({ "PolyX", "-h" }, config, &error)); // -h is now help, not height
+        CHECK(config.showHelp);
+    }
+    {
+        core::AppConfig config;
+        std::string error;
+        CHECK(ParseArgs({ "PolyX", "--wid", "512", "--hei", "256" }, config, &error));
+        CHECK(!config.autoAtlasSize);
+        CHECK(config.requestedAtlasWidth == 512U);
+        CHECK(config.requestedAtlasHeight == 256U);
+    }
+    {
+        core::AppConfig config;
+        std::string error;
         CHECK(!ParseArgs({ "PolyX", "--bogus" }, config, &error)); // unknown option
     }
 }

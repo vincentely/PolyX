@@ -105,7 +105,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
     {
         const std::string argument = argv[i] != nullptr ? argv[i] : "";
 
-        if (argument == "--help")
+        if (argument == "-h" || argument == "--help")
         {
             config.showHelp = true;
             continue;
@@ -159,7 +159,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             continue;
         }
 
-        if (argument == "-w" || argument == "--width" || argument == "--atlas-width")
+        if (argument == "-w" || argument == "--width" || argument == "--wid" || argument == "--atlas-width")
         {
             if (i + 1 >= argc)
             {
@@ -185,7 +185,7 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
             continue;
         }
 
-        if (argument == "-h" || argument == "--height" || argument == "--atlas-height")
+        if (argument == "--height" || argument == "--hei" || argument == "--atlas-height")
         {
             if (i + 1 >= argc)
             {
@@ -256,15 +256,33 @@ bool ParseCommandLine(int argc, char* argv[], AppConfig& config, std::string* er
 
 void PrintUsage(std::ostream& os, const std::filesystem::path& executableName)
 {
-    os << "Usage: " << executableName.string() << " [options] [root-dir]\n"
+    const std::string exe = executableName.filename().string();
+    os << "PolyX - batch FBX texture-atlas builder\n"
+       << "\n"
+       << "Usage:\n"
+       << "  " << exe << " [options] [root-dir]\n"
+       << "\n"
+       << "  root-dir contains input/ and output/ subfolders. If omitted you are\n"
+       << "  prompted for it (default: Bin).\n"
+       << "\n"
        << "Options:\n"
-       << "  --root <dir>             Root directory that contains input/ and output/\n"
-       << "  --auto-size              Use the smallest power-of-two square that fits all tiles (default)\n"
-       << "  -s, --size <n>           Fixed atlas size (width and height) in pixels, must be a power of two\n"
-       << "  -w, --width <n>          Fixed atlas width in pixels\n"
-       << "  -h, --height <n>         Fixed atlas height in pixels\n"
-       << "                           Defaults to the smallest power-of-two square that fits all tiles\n"
-       << "  -q, --quiet              Reduce console output\n"
-       << "  --help                   Show this help message\n";
+       << "  -h, --help                  Show this help message and exit\n"
+       << "      --root <dir>            Root directory that contains input/ and output/\n"
+       << "      --auto-size             Smallest power-of-two square that fits all tiles (default)\n"
+       << "  -s, --size <n>              Fixed atlas size, width = height (power of two)\n"
+       << "  -w, --width, --wid <n>      Fixed atlas width in pixels (power of two)\n"
+       << "      --height, --hei <n>     Fixed atlas height in pixels (power of two)\n"
+       << "  -q, --quiet                 Reduce console output\n"
+       << "\n"
+       << "Notes:\n"
+       << "  - '-h' is help; use --height (or --hei) to set the atlas height.\n"
+       << "  - Sizes must be powers of two: 256, 512, 1024, 2048, 4096, ...\n"
+       << "  - Any of --size / --width / --height disables --auto-size.\n"
+       << "  - Set POLYX_NO_PAUSE=1 to skip the 'press any key to exit' prompt.\n"
+       << "\n"
+       << "Examples:\n"
+       << "  " << exe << " Bin                       Auto-sized atlas for Bin/\n"
+       << "  " << exe << " --size 1024 Bin           Fixed 1024 x 1024 atlas\n"
+       << "  " << exe << " --wid 1024 --hei 512 Bin  Fixed 1024 x 512 atlas\n";
 }
 } // namespace polyx::core
