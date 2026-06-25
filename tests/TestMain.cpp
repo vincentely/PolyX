@@ -8,6 +8,7 @@
 //
 // Tiny assert-based harness (no third-party framework) so it builds offline.
 
+#include "app/Manifest.h"
 #include "atlas/AtlasBuilder.h"
 #include "atlas/TgaLoader.h"
 #include "core/Config.h"
@@ -15,8 +16,10 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -39,6 +42,7 @@ int g_failures = 0;
 namespace atlas = polyx::atlas;
 namespace core = polyx::core;
 namespace uvd = polyx::uv::detail;
+namespace mf = polyx::manifest;
 namespace fs = std::filesystem;
 
 atlas::Image MakeSolid(int w, int h, std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a)
@@ -364,20 +368,104 @@ void TestUnionFind()
     CHECK(uf.Find(0) == uf.Find(3));
 }
 
+// --- Manifest JSON I/O -----------------------------------------------------
+
+void TestManifestRoundTrip()
+{
+    const fs::path reqPath = fs::temp_directory_path() / "polyx_req.json";
+    {
+        std::ofstream out(reqPath, std::ios::binary);
+        out << R"({
+  "version": 1,
+  "atlasSize": "auto",
+  "assetsRoot": "C:/proj/Assets",
+  "outputRoot": "C:/proj/Out",
+  "atlasOut": "C:/proj/Out/atlas.png",
+  "items": [
+    { "fbx": "C:/a/M.fbx", "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga", "textureKind": "palette" },
+    { "fbx": "C:/a/M.fbx", "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T.tga", "textureKind": "full" }
+  ]
+})";
+    }
+
+    mf::Request req;
+    std::string error;
+    const bool readOk = mf::ReadRequest(reqPath, req, &error);
+    if (!readOk) std::printf("ReadRequest failed: %s\n", error.c_str());
+    CHECK(readOk);
+    CHECK(req.version == 1);
+    CHECK(req.atlasSize == "auto");
+    CHECK(req.outputRoot == "C:/proj/Out");
+    CHECK(req.items.size() == 2U);
+    if (req.items.size() == 2U)
+    {
+        CHECK(req.items[0].mesh == "Body");
+        CHECK(req.items[0].nodePath == "/M/Body");
+        CHECK(req.items[0].textureKind == "palette");
+        CHECK(req.items[1].textureKind == "full");
+    }
+    fs::remove(reqPath);
+
+    mf::Result res;
+    res.atlasOut = "C:/proj/Out/atlas.png";
+    res.atlasWidth = 1024;
+    res.atlasHeight = 512;
+    mf::ResultItem item;
+    item.fbx = "C:/a/M.fbx";
+    item.nodePath = "/M/Body";
+    item.mesh = "Body";
+    item.outputFbx = "C:/proj/Out/M.fbx";
+    item.uvSet = "map1";
+    item.status = "ok";
+    res.items.push_back(item);
+    res.warnings.push_back("test warning");
+
+    const fs::path resPath = fs::temp_directory_path() / "polyx_res.json";
+    const bool writeOk = mf::WriteResult(resPath, res, &error);
+    if (!writeOk) std::printf("WriteResult failed: %s\n", error.c_str());
+    CHECK(writeOk);
+
+    std::string content;
+    {
+        std::ifstream in(resPath, std::ios::binary);
+        content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    CHECK(content.find("\"status\": \"ok\"") != std::string::npos);
+    CHECK(content.find("\"atlasWidth\": 1024") != std::string::npos);
+    CHECK(content.find("test warning") != std::string::npos);
+    fs::remove(resPath);
+}
+
 } // namespace
 
 int main()
 {
-    TestAtlasAutoSizeGrowsPastMembers();
-    TestAtlasDedupByKey();
-    TestAtlasFixedSizeTooSmallFails();
-    TestAtlasPackingDenseNoOverlap();
-    TestTga16BitHonorsAlphaBit();
-    TestTga16BitNoAlphaBitsIsOpaque();
-    TestTga24BitDecode();
-    TestConfigParsing();
-    TestQuantizeToBlockOrigin();
-    TestUnionFind();
+    std::setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered: do not lose output on abort
+
+    try
+    {
+        TestAtlasAutoSizeGrowsPastMembers();
+        TestAtlasDedupByKey();
+        TestAtlasFixedSizeTooSmallFails();
+        TestAtlasPackingDenseNoOverlap();
+        TestTga16BitHonorsAlphaBit();
+        TestTga16BitNoAlphaBitsIsOpaque();
+        TestTga24BitDecode();
+        TestConfigParsing();
+        TestQuantizeToBlockOrigin();
+        TestUnionFind();
+        TestManifestRoundTrip();
+    }
+    catch (const std::exception& e)
+    {
+        std::printf("UNCAUGHT EXCEPTION: %s\n", e.what());
+        return 2;
+    }
+    catch (...)
+    {
+        std::printf("UNCAUGHT unknown exception\n");
+        return 2;
+    }
 
     std::printf("\n%d checks, %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -129,6 +129,7 @@ endif()
 add_executable(PolyX
   app/main.cpp
   app/BatchProcessor.cpp
+  app/Manifest.cpp
   core/Config.cpp
   core/Console.cpp
   core/Logger.cpp
@@ -138,7 +139,7 @@ add_executable(PolyX
   atlas/ImageBackend_Windows.cpp
   atlas/TgaLoader.cpp)
 
-target_include_directories(PolyX PRIVATE "${PROJECT_SOURCE_DIR}")
+target_include_directories(PolyX PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/third_party")
 target_link_libraries(PolyX PRIVATE AutodeskFBXSDK gdiplus)
 
 if(WIN32)
@@ -160,13 +161,14 @@ enable_testing()
 
 add_executable(PolyXTests
   tests/TestMain.cpp
+  app/Manifest.cpp
   core/Config.cpp
   core/Logger.cpp
   atlas/AtlasBuilder.cpp
   atlas/ImageBackend_Windows.cpp
   atlas/TgaLoader.cpp)
 
-target_include_directories(PolyXTests PRIVATE "${PROJECT_SOURCE_DIR}")
+target_include_directories(PolyXTests PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/third_party")
 target_link_libraries(PolyXTests PRIVATE gdiplus)
 
 add_test(NAME PolyXTests COMMAND PolyXTests)
