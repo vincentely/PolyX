@@ -648,13 +648,13 @@ void BatchProcessor::VerifyExportedMesh(const FilePlan& filePlan, fbxsdk::FbxSce
                             {
                                 details << "\n  PV[" << curPv << "] poly=" << poly << " v=" << v
                                         << " src(" << oUv[0] << "," << oUv[1]
-                                        << ")��px(" << srcPx << "," << srcPy
+                                        << ")->px(" << srcPx << "," << srcPy
                                         << ") RGBA=(" << static_cast<int>(srcImg.pixels[srcOff])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 1])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 2])
                                         << "," << static_cast<int>(srcImg.pixels[srcOff + 3])
                                         << ") | out(" << nUv[0] << "," << nUv[1]
-                                        << ")��px(" << atPx << "," << atPy
+                                        << ")->px(" << atPx << "," << atPy
                                         << ") RGBA=(" << static_cast<int>(atlasImg.pixels[atOff])
                                         << "," << static_cast<int>(atlasImg.pixels[atOff + 1])
                                         << "," << static_cast<int>(atlasImg.pixels[atOff + 2])

@@ -11,9 +11,23 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+  # Compile sources as UTF-8 so any non-ASCII bytes are not reinterpreted under
+  # the system code page (cp936 here), which can corrupt strings/declarations.
+  add_compile_options(/utf-8)
+endif()
+
 option(POLYX_FBXSDK_SHARED "Link against the shared Autodesk FBX SDK runtime DLL" ON)
 
-set(POLYX_FBXSDK_ROOT "C:/Program Files/Autodesk/FBX/FBX SDK/2020.3.9" CACHE PATH "Root directory of the Autodesk FBX SDK" FORCE)
+# Overridable via -DPOLYX_FBXSDK_ROOT=... or the POLYX_FBXSDK_ROOT env var;
+# falls back to the default install location.
+if(NOT POLYX_FBXSDK_ROOT)
+  if(DEFINED ENV{POLYX_FBXSDK_ROOT})
+    set(POLYX_FBXSDK_ROOT "$ENV{POLYX_FBXSDK_ROOT}" CACHE PATH "Root directory of the Autodesk FBX SDK")
+  else()
+    set(POLYX_FBXSDK_ROOT "C:/Program Files/Autodesk/FBX/FBX SDK/2020.3.9" CACHE PATH "Root directory of the Autodesk FBX SDK")
+  endif()
+endif()
 set(POLYX_FBXSDK_INCLUDE_DIR "${POLYX_FBXSDK_ROOT}/include" CACHE PATH "FBX SDK include directory" FORCE)
 set(POLYX_FBXSDK_LIBRARY_DEBUG "${POLYX_FBXSDK_ROOT}/lib/x64/debug/libfbxsdk.lib" CACHE FILEPATH "FBX SDK debug library" FORCE)
 set(POLYX_FBXSDK_LIBRARY_RELEASE "${POLYX_FBXSDK_ROOT}/lib/x64/release/libfbxsdk.lib" CACHE FILEPATH "FBX SDK release library" FORCE)
@@ -135,3 +149,21 @@ if(POLYX_FBXSDK_SHARED)
       "$<IF:$<CONFIG:Debug>,${POLYX_FBXSDK_DLL_DEBUG},${POLYX_FBXSDK_DLL_RELEASE}>"
       "$<TARGET_FILE_DIR:PolyX>")
 endif()
+
+# ---------------------------------------------------------------------------
+# Unit tests. Dependency-free (no FBX SDK): covers the pure-logic layers
+# Config / AtlasBuilder / TgaLoader. Run with: ctest --test-dir <build-dir>
+# ---------------------------------------------------------------------------
+enable_testing()
+
+add_executable(PolyXTests
+  tests/TestMain.cpp
+  core/Config.cpp
+  core/Logger.cpp
+  atlas/AtlasBuilder.cpp
+  atlas/TgaLoader.cpp)
+
+target_include_directories(PolyXTests PRIVATE "${PROJECT_SOURCE_DIR}")
+target_link_libraries(PolyXTests PRIVATE gdiplus)
+
+add_test(NAME PolyXTests COMMAND PolyXTests)
