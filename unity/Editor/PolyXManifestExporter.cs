@@ -119,7 +119,6 @@ namespace PolyX.EditorTools
                             mesh = mesh.name,
                             nodePath = NodePath(r.transform, root.transform),
                             texture = RelFromFolder(folder, texPath),
-                            textureKind = "palette",
                         });
                     }
                 }
@@ -215,7 +214,6 @@ namespace PolyX.EditorTools
             public string mesh;
             public string nodePath;
             public string texture;
-            public string textureKind;
         }
 
         [Serializable]

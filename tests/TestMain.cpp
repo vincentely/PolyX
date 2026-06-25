@@ -382,8 +382,8 @@ void TestManifestRoundTrip()
   "outputRoot": "C:/proj/Out",
   "atlasOut": "C:/proj/Out/atlas.png",
   "items": [
-    { "fbx": "C:/a/M.fbx", "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga", "textureKind": "palette" },
-    { "fbx": "C:/a/M.fbx", "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T.tga", "textureKind": "full" }
+    { "fbx": "C:/a/M.fbx", "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga" },
+    { "fbx": "C:/a/M.fbx", "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T2.tga" }
   ]
 })";
     }
@@ -401,8 +401,9 @@ void TestManifestRoundTrip()
     {
         CHECK(req.items[0].mesh == "Body");
         CHECK(req.items[0].nodePath == "/M/Body");
-        CHECK(req.items[0].textureKind == "palette");
-        CHECK(req.items[1].textureKind == "full");
+        CHECK(req.items[0].texture == "C:/a/T.tga");
+        CHECK(req.items[1].mesh == "Hat");
+        CHECK(req.items[1].texture == "C:/a/T2.tga");
     }
     fs::remove(reqPath);
 

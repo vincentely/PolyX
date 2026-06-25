@@ -81,7 +81,6 @@ bool ReadRequest(const std::filesystem::path& file, Request& out, std::string* e
             item.mesh = GetString(entry, "mesh");
             item.nodePath = GetString(entry, "nodePath");
             item.texture = GetString(entry, "texture");
-            item.textureKind = GetString(entry, "textureKind", "palette");
             out.items.push_back(std::move(item));
         }
     }

@@ -235,12 +235,6 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
     for (std::size_t i = 0; i < request.items.size(); ++i)
     {
         const manifest::RequestItem& item = request.items[i];
-        if (item.textureKind != "palette")
-        {
-            result.items[i].status = "skipped";
-            result.items[i].detail = "kind:" + (item.textureKind.empty() ? std::string("none") : item.textureKind);
-            continue;
-        }
 
         const std::filesystem::path absFbx = (jsonDir / std::filesystem::u8path(item.fbx)).lexically_normal();
         const std::filesystem::path absTexture = (jsonDir / std::filesystem::u8path(item.texture)).lexically_normal();

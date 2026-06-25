@@ -12,8 +12,7 @@ struct RequestItem
     std::string fbx;          // absolute path to the source FBX
     std::string mesh;         // mesh name (fallback identity)
     std::string nodePath;     // "/Name/Name/..." node path (primary identity)
-    std::string texture;      // absolute path to the source texture
-    std::string textureKind;  // "palette" (processed) | "full" (skipped)
+    std::string texture;      // path to the source texture
 };
 
 struct Request
