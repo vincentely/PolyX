@@ -99,16 +99,16 @@ bool BatchProcessor::Run()
                 logger_.Info("Analyzing FBX: " + fbxFile.string());
             }
 
-            fbx::FbxLoader loader;
+            auto loaderPtr = std::make_unique<fbx::FbxLoader>();
             std::string errorMessage;
-            if (!loader.Load(fbxFile, &errorMessage))
+            if (!loaderPtr->Load(fbxFile, &errorMessage))
             {
                 logger_.Error("Failed to load FBX for analysis: " + fbxFile.string() + " | " + errorMessage);
                 hadFatalError = true;
                 continue;
             }
 
-            uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loader.Scene(), package.sourceTexture, logger_);
+            uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loaderPtr->Scene(), package.sourceTexture, logger_);
             for (const uv::TileCandidate& tile : scenePlan.uniqueTiles)
             {
                 std::string tileError;
@@ -125,6 +125,7 @@ bool BatchProcessor::Run()
             filePlan.sourceTexturePath = package.sourceTexturePath;
             filePlan.sourceTexture = package.sourceTexture;
             filePlan.scenePlan = std::move(scenePlan);
+            filePlan.originalLoader = std::move(loaderPtr);
             filePlans.push_back(std::move(filePlan));
         }
     }
@@ -313,15 +314,14 @@ bool BatchProcessor::ExportScenes(const std::vector<FilePlan>& filePlans,
             logger_.Info("Exporting FBX: " + filePlan.inputFbx.string());
         }
 
-        fbx::FbxLoader inputLoader;
+        // Reuse the scene parsed during analysis as the pristine reference (it is
+        // never modified), avoiding a redundant re-parse of the input file here.
+        fbxsdk::FbxScene* originalScene = filePlan.originalLoader ? filePlan.originalLoader->Scene() : nullptr;
+        if (originalScene == nullptr)
         {
-            std::string errorMessage;
-            if (!inputLoader.Load(filePlan.inputFbx, &errorMessage))
-            {
-                logger_.Error("Failed to load original FBX for reference: " + filePlan.inputFbx.string() + " | " + errorMessage);
-                hadFatalError = true;
-                continue;
-            }
+            logger_.Error("Missing analyzed scene for reference: " + filePlan.inputFbx.string());
+            hadFatalError = true;
+            continue;
         }
 
         fbx::FbxLoader loader;
@@ -335,7 +335,7 @@ bool BatchProcessor::ExportScenes(const std::vector<FilePlan>& filePlans,
             }
         }
 
-        if (!ApplyScenePlan(loader.Scene(), inputLoader.Scene(), filePlan, atlasBuilder, atlasOutputPath))
+        if (!ApplyScenePlan(loader.Scene(), originalScene, filePlan, atlasBuilder, atlasOutputPath))
         {
             hadFatalError = true;
             continue;
@@ -350,7 +350,7 @@ bool BatchProcessor::ExportScenes(const std::vector<FilePlan>& filePlans,
             continue;
         }
 
-        VerifyExportedMesh(filePlan, inputLoader.Scene(), atlasBuilder);
+        VerifyExportedMesh(filePlan, originalScene, atlasBuilder);
     }
 
     return !hadFatalError;

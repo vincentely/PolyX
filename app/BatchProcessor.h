@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,9 @@ private:
         std::filesystem::path sourceTexturePath;
         atlas::Image sourceTexture;
         uv::ScenePlan scenePlan;
+        // Scene loaded during analysis, kept alive (pristine) to reuse as the
+        // export-time reference instead of re-loading the input file.
+        std::unique_ptr<fbx::FbxLoader> originalLoader;
     };
 
     bool DiscoverPackages(std::vector<PackageInfo>& packages);
