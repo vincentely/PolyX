@@ -164,6 +164,50 @@ void TestAtlasFixedSizeTooSmallFails()
     CHECK(!builder.Build(&error)); // tile wider than the atlas -> must fail
 }
 
+// Stress the skyline packer: many varied tiles must all land in-bounds and never
+// overlap (the core correctness guarantee of the packing change).
+void TestAtlasPackingDenseNoOverlap()
+{
+    atlas::AtlasBuilder builder;
+    builder.SetAutoSize(true);
+    const int sizes[][2] = {
+        { 16, 8 }, { 8, 32 }, { 24, 16 }, { 32, 32 }, { 8, 8 },
+        { 16, 16 }, { 40, 8 }, { 8, 24 }, { 24, 24 }, { 12, 20 }
+    };
+
+    int count = 0;
+    for (int rep = 0; rep < 2; ++rep)
+    {
+        for (const auto& s : sizes)
+        {
+            const atlas::Image tile = MakeSolid(s[0], s[1],
+                                                static_cast<std::uint8_t>(count * 9 + 1),
+                                                static_cast<std::uint8_t>(count * 5 + 2),
+                                                static_cast<std::uint8_t>(count * 3 + 3), 255);
+            std::string error;
+            CHECK(builder.AddTile("dense" + std::to_string(count), tile, atlas::Rect{ 0, 0, s[0], s[1] }, &error));
+            ++count;
+        }
+    }
+
+    std::string error;
+    CHECK(builder.Build(&error));
+    const atlas::Image& atlasImage = builder.GetAtlasImage();
+    const std::vector<atlas::AtlasEntry>& entries = builder.Entries();
+    CHECK(entries.size() == static_cast<std::size_t>(count));
+    for (std::size_t i = 0; i < entries.size(); ++i)
+    {
+        const atlas::Rect& r = entries[i].atlasRect;
+        CHECK(r.x >= 0 && r.y >= 0);
+        CHECK(r.x + r.width <= atlasImage.width);
+        CHECK(r.y + r.height <= atlasImage.height);
+        for (std::size_t j = i + 1; j < entries.size(); ++j)
+        {
+            CHECK(!Overlaps(r, entries[j].atlasRect));
+        }
+    }
+}
+
 // --- TgaLoader -------------------------------------------------------------
 
 // Regression for the 16-bit alpha bug. With 1 attribute bit declared, the high
@@ -313,6 +357,7 @@ int main()
     TestAtlasAutoSizeGrowsPastMembers();
     TestAtlasDedupByKey();
     TestAtlasFixedSizeTooSmallFails();
+    TestAtlasPackingDenseNoOverlap();
     TestTga16BitHonorsAlphaBit();
     TestTga16BitNoAlphaBitsIsOpaque();
     TestTga24BitDecode();

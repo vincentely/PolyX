@@ -545,14 +545,115 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
         return false;
     }
 
-    int rowX = 0;
-    int rowY = 0;
-    int rowHeight = 0;
+    // Skyline bottom-left packing: better space utilization than shelf packing,
+    // while still guaranteeing non-overlapping, in-bounds placement. Each skyline
+    // node is a horizontal segment {x, y, width} describing the current top profile;
+    // the segments always tile [0, targetWidth) with no gaps.
+    const int gutter = core::kAtlasGutter; // zero by project rule (see core/Constants.h)
+
+    struct Node
+    {
+        int x;
+        int y;
+        int width;
+    };
+
+    std::vector<Node> skyline;
+    skyline.push_back(Node{ 0, 0, targetWidth });
+
+    // Lowest (then leftmost) y at which a w-wide, h-tall rect fits; false if none.
+    const auto fit = [&](int w, int h, int& outX, int& outY) -> bool
+    {
+        int bestY = 0;
+        int bestX = 0;
+        bool found = false;
+        for (std::size_t i = 0; i < skyline.size(); ++i)
+        {
+            const int x = skyline[i].x;
+            if (x + w > targetWidth)
+            {
+                continue;
+            }
+
+            int y = 0;
+            int remaining = w;
+            for (std::size_t j = i; j < skyline.size() && remaining > 0; ++j)
+            {
+                y = std::max(y, skyline[j].y);
+                remaining -= skyline[j].width;
+            }
+            if (remaining > 0)
+            {
+                continue; // not enough width to the right edge
+            }
+            if (y + h > targetHeight)
+            {
+                continue;
+            }
+            if (!found || y < bestY || (y == bestY && x < bestX))
+            {
+                found = true;
+                bestY = y;
+                bestX = x;
+            }
+        }
+        if (!found)
+        {
+            return false;
+        }
+        outX = bestX;
+        outY = bestY;
+        return true;
+    };
+
+    // Raise the skyline over [x, x+width) to `height`, then merge equal-height runs.
+    const auto raiseSkyline = [&](int x, int width, int height)
+    {
+        std::vector<Node> updated;
+        updated.push_back(Node{ x, height, width });
+        const int cx0 = x;
+        const int cx1 = x + width;
+        for (const Node& n : skyline)
+        {
+            const int nx0 = n.x;
+            const int nx1 = n.x + n.width;
+            if (nx1 <= cx0 || nx0 >= cx1)
+            {
+                updated.push_back(n);
+                continue;
+            }
+            if (nx0 < cx0)
+            {
+                updated.push_back(Node{ nx0, n.y, cx0 - nx0 });
+            }
+            if (nx1 > cx1)
+            {
+                updated.push_back(Node{ cx1, n.y, nx1 - cx1 });
+            }
+        }
+
+        std::sort(updated.begin(), updated.end(), [](const Node& a, const Node& b) { return a.x < b.x; });
+
+        skyline.clear();
+        for (const Node& n : updated)
+        {
+            if (!skyline.empty() && skyline.back().y == n.y && skyline.back().x + skyline.back().width == n.x)
+            {
+                skyline.back().width += n.width;
+            }
+            else
+            {
+                skyline.push_back(n);
+            }
+        }
+    };
 
     for (const std::size_t index : order)
     {
         const PendingTile& tile = tiles_[index];
-        if (tile.image.width > targetWidth)
+        const int w = tile.image.width;
+        const int h = tile.image.height;
+        if (w > targetWidth)
         {
             if (errorMessage != nullptr)
             {
@@ -561,18 +662,13 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
             return false;
         }
 
-        if (rowX > 0 && rowX + tile.image.width > targetWidth)
-        {
-            rowY += rowHeight + core::kAtlasGutter;
-            rowX = 0;
-            rowHeight = 0;
-        }
-
-        if (rowY + tile.image.height > targetHeight)
+        int px = 0;
+        int py = 0;
+        if (!fit(w, h, px, py))
         {
             if (errorMessage != nullptr)
             {
-                *errorMessage = "Atlas target height is too small for tile: " + tile.key;
+                *errorMessage = "Atlas target is too small for tile: " + tile.key;
             }
             return false;
         }
@@ -580,17 +676,15 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
         AtlasEntry entry;
         entry.key = tile.key;
         entry.sourceRect = tile.sourceRect;
-        entry.atlasRect = Rect{ rowX, rowY, tile.image.width, tile.image.height };
+        entry.atlasRect = Rect{ px, py, w, h };
         if (packedEntries != nullptr)
         {
             packedEntries->push_back(std::move(entry));
         }
 
-        // Tiles are packed edge-to-edge: polygon art style, no mipmapping, so
-        // zero gutter is an intentional rule (see core/Constants.h). If
-        // kAtlasGutter becomes non-zero, revisit the wrap / bounds checks.
-        rowX += tile.image.width + core::kAtlasGutter;
-        rowHeight = std::max(rowHeight, tile.image.height);
+        // Reserve the tile footprint plus gutter, clamped to the atlas width.
+        const int reservedWidth = std::min(w + gutter, targetWidth - px);
+        raiseSkyline(px, reservedWidth, py + h + gutter);
     }
 
     return true;
