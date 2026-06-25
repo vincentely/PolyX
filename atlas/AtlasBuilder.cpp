@@ -1,6 +1,8 @@
 #include "atlas/AtlasBuilder.h"
 #include "atlas/TgaLoader.h"
 
+#include "core/Constants.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -559,14 +561,14 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
             return false;
         }
 
-        if (rowX > 0 && rowX + tile.image.width > targetWidth_)
+        if (rowX > 0 && rowX + tile.image.width > targetWidth)
         {
-            rowY += rowHeight;
+            rowY += rowHeight + core::kAtlasGutter;
             rowX = 0;
             rowHeight = 0;
         }
 
-        if (rowY + tile.image.height > targetHeight_)
+        if (rowY + tile.image.height > targetHeight)
         {
             if (errorMessage != nullptr)
             {
@@ -584,7 +586,10 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
             packedEntries->push_back(std::move(entry));
         }
 
-        rowX += tile.image.width;
+        // Tiles are packed edge-to-edge: polygon art style, no mipmapping, so
+        // zero gutter is an intentional rule (see core/Constants.h). If
+        // kAtlasGutter becomes non-zero, revisit the wrap / bounds checks.
+        rowX += tile.image.width + core::kAtlasGutter;
         rowHeight = std::max(rowHeight, tile.image.height);
     }
 

@@ -33,7 +33,7 @@ bool ReadExact(std::istream& stream, void* buffer, std::size_t size)
     return stream.good();
 }
 
-bool DecodePixel(std::uint8_t* rgba, const std::uint8_t* data, int bytesPerPixel, bool grayscale)
+bool DecodePixel(std::uint8_t* rgba, const std::uint8_t* data, int bytesPerPixel, bool grayscale, bool honorAlphaBit)
 {
     if (grayscale)
     {
@@ -53,7 +53,7 @@ bool DecodePixel(std::uint8_t* rgba, const std::uint8_t* data, int bytesPerPixel
         rgba[0] = static_cast<std::uint8_t>(((value >> 10U) & 0x1FU) * 255U / 31U);
         rgba[1] = static_cast<std::uint8_t>(((value >> 5U) & 0x1FU) * 255U / 31U);
         rgba[2] = static_cast<std::uint8_t>((value & 0x1FU) * 255U / 31U);
-        rgba[3] = (value & 0x8000U) != 0U ? 255U : 255U;
+        rgba[3] = honorAlphaBit ? ((value & 0x8000U) != 0U ? 255U : 0U) : 255U;
         return true;
     }
     case 3:
@@ -81,7 +81,8 @@ bool WritePixel(Image& image,
                 bool originRight,
                 const std::uint8_t* pixelData,
                 int bytesPerPixel,
-                bool grayscale)
+                bool grayscale,
+                bool honorAlphaBit)
 {
     std::size_t row = index / static_cast<std::size_t>(width);
     std::size_t col = index % static_cast<std::size_t>(width);
@@ -97,7 +98,7 @@ bool WritePixel(Image& image,
     }
 
     std::uint8_t* dst = image.pixels.data() + (row * static_cast<std::size_t>(width) + col) * 4U;
-    return DecodePixel(dst, pixelData, bytesPerPixel, grayscale);
+    return DecodePixel(dst, pixelData, bytesPerPixel, grayscale, honorAlphaBit);
 }
 
 bool LoadTgaInternal(const std::filesystem::path& filePath, Image& image, std::string* errorMessage)
@@ -183,6 +184,11 @@ bool LoadTgaInternal(const std::filesystem::path& filePath, Image& image, std::s
 
     const bool originTop = (header.imageDescriptor & 0x20U) != 0U;
     const bool originRight = (header.imageDescriptor & 0x10U) != 0U;
+    // Low 4 bits of the image descriptor hold the attribute (alpha) bit count.
+    // Only honor the 16-bit attribute bit as alpha when at least one is declared;
+    // otherwise treat 16-bit pixels as fully opaque (avoids transparent output for
+    // writers that leave the bit clear on opaque images).
+    const bool honorAlphaBit = (header.imageDescriptor & 0x0FU) != 0U;
     const std::size_t totalPixels = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
     std::vector<std::uint8_t> pixelBuffer(static_cast<std::size_t>(bytesPerPixel > 0 ? bytesPerPixel : 1));
 
@@ -199,7 +205,7 @@ bool LoadTgaInternal(const std::filesystem::path& filePath, Image& image, std::s
                 return false;
             }
 
-            if (!WritePixel(image, i, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale))
+            if (!WritePixel(image, i, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale, honorAlphaBit))
             {
                 if (errorMessage != nullptr)
                 {
@@ -238,7 +244,7 @@ bool LoadTgaInternal(const std::filesystem::path& filePath, Image& image, std::s
 
                 for (std::size_t i = 0; i < packetCount && written < totalPixels; ++i, ++written)
                 {
-                    if (!WritePixel(image, written, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale))
+                    if (!WritePixel(image, written, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale, honorAlphaBit))
                     {
                         if (errorMessage != nullptr)
                         {
@@ -261,7 +267,7 @@ bool LoadTgaInternal(const std::filesystem::path& filePath, Image& image, std::s
                         return false;
                     }
 
-                    if (!WritePixel(image, written, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale))
+                    if (!WritePixel(image, written, width, height, originTop, originRight, pixelBuffer.data(), bytesPerPixel, grayscale, honorAlphaBit))
                     {
                         if (errorMessage != nullptr)
                         {
