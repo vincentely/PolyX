@@ -140,4 +140,4 @@ Bin/      示例数据（Landlord 角色），已被 .gitignore 忽略
 
 ## 版本
 
-当前 `0.2.0`。后续迭代方向见 [docs/BACKLOG.md](docs/BACKLOG.md)，代码清理施工图见 [docs/CLEANUP.md](docs/CLEANUP.md)。
+当前 `0.3.0`。后续迭代方向见 [docs/BACKLOG.md](docs/BACKLOG.md)，代码清理施工图见 [docs/CLEANUP.md](docs/CLEANUP.md)。

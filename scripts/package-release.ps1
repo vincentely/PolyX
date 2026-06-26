@@ -1,7 +1,7 @@
 param(
     [string]$BuildDir = "out/build/x64-release",
-    [string]$PackageDir = "dist/PolyX-0.2.0-win64",
-    [string]$Version = "0.2.0"
+    [string]$PackageDir = "dist/PolyX-0.3.0-win64",
+    [string]$Version = "0.3.0"
 )
 
 $ErrorActionPreference = "Stop"

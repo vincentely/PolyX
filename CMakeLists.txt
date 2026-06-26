@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(PolyX VERSION 0.2.0 LANGUAGES CXX)
+project(PolyX VERSION 0.3.0 LANGUAGES CXX)
 
 if(POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
