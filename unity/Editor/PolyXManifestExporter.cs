@@ -19,7 +19,7 @@ namespace PolyX.EditorTools
 {
     public class PolyXManifestExporter : EditorWindow
     {
-        private const string DefaultFolder = "Assets/Game/3D/Mesh/Env/PetScene";
+        private const string DefaultFolder = "Assets/Game/3D/Mesh/Pet";
         private const string ManifestName = "polyx_manifest.json";
 
         [SerializeField] private string _folder = DefaultFolder;
