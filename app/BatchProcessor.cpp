@@ -112,6 +112,25 @@ std::string NodePath(fbxsdk::FbxNode* node)
     return path.empty() ? "/" : path;
 }
 
+// Last "/Name/Name" segment of a node path.
+std::string LastPathSegment(const std::string& path)
+{
+    const std::size_t pos = path.find_last_of('/');
+    return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+// True if `full` ends with `suffix` at a path boundary. Node paths start with '/'
+// so a suffix like "/Pet_Normal_20" matches "/Pet_01A/Pet_Normal_20" cleanly --
+// this absorbs Unity's extra import-root GameObject that the FBX has no node for.
+bool PathEndsWith(const std::string& full, const std::string& suffix)
+{
+    if (suffix.empty() || suffix.size() > full.size() || suffix.front() != '/')
+    {
+        return false;
+    }
+    return full.compare(full.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 // Per-polygon material slot index (submesh). Defaults to 0.
 int MaterialIndexOfPolygon(const fbxsdk::FbxMesh* mesh, int poly)
 {
@@ -375,23 +394,34 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
             {
                 continue;
             }
-            const std::string nodePath = NodePath(sceneMesh->GetNode());
-            const std::string meshName = sceneMesh->GetName() != nullptr ? sceneMesh->GetName() : "";
+            fbxsdk::FbxNode* meshNode = sceneMesh->GetNode();
+            const std::string nodePath = NodePath(meshNode);
+            const std::string nodeName = (meshNode != nullptr && meshNode->GetName() != nullptr) ? meshNode->GetName() : "";
+            const std::string geomName = sceneMesh->GetName() != nullptr ? sceneMesh->GetName() : "";
 
             int matchJ = -1;
+            // Phase 1: nodePath, tolerating Unity's extra import-root prefix
+            // (manifest "/Pet_01A/Pet_Normal_20" vs FBX "/Pet_Normal_20").
             for (std::size_t j = 0; j < item.meshes.size(); ++j)
             {
-                if (!item.meshes[j].nodePath.empty() && item.meshes[j].nodePath == nodePath)
+                const std::string& entryPath = item.meshes[j].nodePath;
+                if (!entryPath.empty() &&
+                    (entryPath == nodePath || PathEndsWith(entryPath, nodePath) || PathEndsWith(nodePath, entryPath)))
                 {
                     matchJ = static_cast<int>(j);
                     break;
                 }
             }
-            if (matchJ < 0 && !meshName.empty())
+            // Phase 2: by name -- manifest mesh vs the FBX node name or geometry name,
+            // or the manifest nodePath leaf vs the node name.
+            if (matchJ < 0)
             {
                 for (std::size_t j = 0; j < item.meshes.size(); ++j)
                 {
-                    if (item.meshes[j].mesh == meshName)
+                    const manifest::MeshEntry& entry = item.meshes[j];
+                    if ((!nodeName.empty() && entry.mesh == nodeName) ||
+                        (!geomName.empty() && entry.mesh == geomName) ||
+                        (!nodeName.empty() && LastPathSegment(entry.nodePath) == nodeName))
                     {
                         matchJ = static_cast<int>(j);
                         break;
