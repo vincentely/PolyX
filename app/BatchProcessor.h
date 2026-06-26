@@ -42,9 +42,8 @@ private:
     {
         std::filesystem::path inputFbx;
         std::filesystem::path outputFbx;
-        std::filesystem::path sourceTexturePath;
-        atlas::Image sourceTexture;                 // folder mode: one texture for all meshes
-        std::vector<atlas::Image> meshTextures;     // manifest mode: per-mesh (scene order)
+        // Per-mesh (scene order) -> per material slot (submesh) source textures.
+        std::vector<std::vector<atlas::Image>> meshMaterialTextures;
         uv::ScenePlan scenePlan;
         // Scene loaded during analysis, kept alive (pristine) to reuse as the
         // export-time reference instead of re-loading the input file.

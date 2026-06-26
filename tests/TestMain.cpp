@@ -384,7 +384,7 @@ void TestManifestRoundTrip()
   "items": [
     { "fbx": "C:/a/M.fbx", "meshes": [
       { "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga" },
-      { "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T2.tga" }
+      { "mesh": "Hat", "nodePath": "/M/Hat", "textures": ["C:/a/T2.tga", "C:/a/T3.tga"] }
     ] }
   ]
 })";
@@ -407,9 +407,18 @@ void TestManifestRoundTrip()
         {
             CHECK(req.items[0].meshes[0].mesh == "Body");
             CHECK(req.items[0].meshes[0].nodePath == "/M/Body");
-            CHECK(req.items[0].meshes[0].texture == "C:/a/T.tga");
+            CHECK(req.items[0].meshes[0].textures.size() == 1U); // singular "texture" -> 1 entry
+            if (!req.items[0].meshes[0].textures.empty())
+            {
+                CHECK(req.items[0].meshes[0].textures[0] == "C:/a/T.tga");
+            }
             CHECK(req.items[0].meshes[1].mesh == "Hat");
-            CHECK(req.items[0].meshes[1].texture == "C:/a/T2.tga");
+            CHECK(req.items[0].meshes[1].textures.size() == 2U);
+            if (req.items[0].meshes[1].textures.size() == 2U)
+            {
+                CHECK(req.items[0].meshes[1].textures[0] == "C:/a/T2.tga");
+                CHECK(req.items[0].meshes[1].textures[1] == "C:/a/T3.tga");
+            }
         }
     }
     fs::remove(reqPath);

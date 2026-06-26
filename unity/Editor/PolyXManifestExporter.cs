@@ -101,26 +101,28 @@ namespace PolyX.EditorTools
                             continue;
                         }
 
-                        // Collect the distinct main textures across all material slots.
-                        // Multi-submesh meshes whose slots share ONE texture are fine (the whole
-                        // mesh is atlased against it). Slots using DIFFERENT textures would need
-                        // per-submesh atlasing (not yet supported), so skip them to avoid wrong UVs.
+                        // One texture per material slot (submesh), in slot order so the C++ side
+                        // can map each polygon's material index to its texture. Empty string for a
+                        // slot with no resolvable texture (those polygons are left unprocessed).
                         var texPaths = new List<string>();
+                        bool anyTexture = false;
                         foreach (var mat in mats)
                         {
                             Texture mt = MainTexture(mat);
-                            if (mt == null) continue;
-                            string mp = AssetDatabase.GetAssetPath(mt);
-                            if (!string.IsNullOrEmpty(mp) && !texPaths.Contains(mp)) texPaths.Add(mp);
+                            string mp = mt != null ? AssetDatabase.GetAssetPath(mt) : null;
+                            if (!string.IsNullOrEmpty(mp))
+                            {
+                                texPaths.Add(RelFromFolder(folder, mp));
+                                anyTexture = true;
+                            }
+                            else
+                            {
+                                texPaths.Add("");
+                            }
                         }
-                        if (texPaths.Count == 0)
+                        if (!anyTexture)
                         {
                             warnings.Add("No main texture: " + fbxPath + " :: " + r.name);
-                            continue;
-                        }
-                        if (texPaths.Count > 1)
-                        {
-                            warnings.Add("Skipped (submeshes use " + texPaths.Count + " different textures; per-submesh atlas not supported): " + fbxPath + " :: " + r.name);
                             continue;
                         }
 
@@ -128,7 +130,7 @@ namespace PolyX.EditorTools
                         {
                             mesh = mesh.name,
                             nodePath = NodePath(r.transform, root.transform),
-                            texture = RelFromFolder(folder, texPaths[0]),
+                            textures = texPaths,
                         });
                     }
 
@@ -225,7 +227,7 @@ namespace PolyX.EditorTools
         {
             public string mesh;
             public string nodePath;
-            public string texture;
+            public List<string> textures = new List<string>();
         }
 
         [Serializable]

@@ -20,17 +20,20 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
   "atlasSize": "auto",
   "items": [
     {
-      "fbx": "Pet_Grass02.fbx",
+      "fbx": "Pet_06B.fbx",
       "meshes": [
-        { "mesh": "Pet_Grass02", "nodePath": "/Pet_Grass02",
-          "texture": "../../../Texture/PetScene/petpark_guanmu_02.png" }
+        { "mesh": "Pet_06B", "nodePath": "/Pet_06B",
+          "textures": [
+            "../../Texture/T_Pet_01.tga",
+            "../../Texture/T_Pet_02.tga"
+          ] }
       ]
     }
   ]
 }
 ```
 
-结构是 **一个 FBX → 多个 mesh**，每个 mesh 带自己的贴图（可以各不相同）。
+结构是 **一个 FBX → 多个 mesh → 每个 mesh 多个材质槽（submesh）的贴图数组**。`textures[m]` 对应材质槽 / submesh m（即 FBX 多边形的材质索引 m），各槽可用不同贴图。单材质就是 1 个元素。槽无贴图用 `""`（该 submesh 的多边形保持原样）。
 
 | 字段 | 说明 |
 |------|------|
@@ -40,7 +43,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | `items[].meshes[]` | 该 FBX 下的一个或多个网格 |
 | `…meshes[].mesh` | 网格名（匹配兜底） |
 | `…meshes[].nodePath` | `/名/名/…` 节点路径（主匹配键） |
-| `…meshes[].texture` | 该网格的源贴图路径，**相对于本 JSON 所在目录**（多为 `../`） |
+| `…meshes[].textures[]` | **按材质槽顺序**的贴图路径数组（每个 submesh 一张），相对本 JSON 目录。兼容旧的单数 `texture`（视作 1 个元素） |
 
 > C++ 按 `nodePath`（兜底 `mesh` 名）在 FBX 内**逐网格**匹配，各自用自己的贴图重映射 UV、合进同一张共享图集。
 > 不区分 palette/full：manifest 里有什么就合，要不要收进来由人在 Unity 里决定（选哪些导出）。
@@ -89,6 +92,6 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 
 - **Phase A（已完成）**：JSON 读写层 [`app/Manifest.h`](../app/Manifest.h) / `app/Manifest.cpp`（结构体 + `ReadRequest` / `WriteResult`），单元测试覆盖。`json.hpp` 已 vendored 并接入 CMake。现有目录模式不受影响。
 - **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 逐 FBX 加载 → **按 nodePath/名 把场景网格匹配到 manifest 条目、各用自己的贴图分析**（`UVAnalyzer::AnalyzeScene` 现接收 per-mesh 贴图数组）→ 单张共享图集 → 逐网格重映射 UV、只对已合图的网格重指材质 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`，输出到 `<exe目录>/output/`。验证：PetScene 33 FBX → 2048×2048，33 ok，0 mismatch；折叠（folder）模式与单测仍绿。
-  - 多材质网格（submesh）→ `warn/submesh:N`，仍按该网格贴图整体重映射。匹配不到的网格保持原样（不改 UV、不重指材质）。
+  - **多材质 / submesh 已支持**：按多边形材质索引分别用 `textures[m]` 分析、各自重映射、合进同一图集；缺贴图的槽保持原样。匹配不到的网格保持原样（不改 UV、不重指材质）。
 - **Phase A（Unity 侧）**：[unity/Editor/PolyXManifestExporter.cs](../unity/Editor/PolyXManifestExporter.cs)（菜单 Tools › PolyX › Manifest Exporter）扫描 FBX 目录、解析主贴图、导出相对路径 request.json。
 - **回写（手动）**：把 `output/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。

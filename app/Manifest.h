@@ -9,9 +9,9 @@ namespace polyx::manifest
 // Request: what Unity exports for PolyX to merge. See docs/UNITY-PIPELINE.md.
 struct MeshEntry
 {
-    std::string mesh;         // mesh name (fallback identity)
-    std::string nodePath;     // "/Name/Name/..." node path (primary identity)
-    std::string texture;      // path to the source texture for this mesh
+    std::string mesh;                   // mesh name (fallback identity)
+    std::string nodePath;               // "/Name/Name/..." node path (primary identity)
+    std::vector<std::string> textures;  // one per material slot / submesh (in slot order)
 };
 
 struct RequestItem

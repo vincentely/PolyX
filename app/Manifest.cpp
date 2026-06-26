@@ -89,7 +89,24 @@ bool ReadRequest(const std::filesystem::path& file, Request& out, std::string* e
                     MeshEntry meshEntry;
                     meshEntry.mesh = GetString(meshNode, "mesh");
                     meshEntry.nodePath = GetString(meshNode, "nodePath");
-                    meshEntry.texture = GetString(meshNode, "texture");
+                    if (const auto texIt = meshNode.find("textures"); texIt != meshNode.end() && texIt->is_array())
+                    {
+                        for (const json& tex : *texIt)
+                        {
+                            if (tex.is_string())
+                            {
+                                meshEntry.textures.push_back(tex.get<std::string>());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        const std::string single = GetString(meshNode, "texture"); // back-compat
+                        if (!single.empty())
+                        {
+                            meshEntry.textures.push_back(single);
+                        }
+                    }
                     item.meshes.push_back(std::move(meshEntry));
                 }
             }

@@ -31,6 +31,8 @@ struct RegionMapping
     int originY = 0;
     int width = 0;
     int height = 0;
+    int textureWidth = 0;  // dims of the source texture this region was sampled from
+    int textureHeight = 0; // (per material slot / submesh)
 };
 
 struct MeshPlan
@@ -57,10 +59,11 @@ struct ScenePlan
 class UVAnalyzer
 {
 public:
-    // meshTextures[i] is the source texture for the i-th mesh (scene traversal
-    // order), or nullptr/empty to leave that mesh unprocessed.
+    // meshMaterialTextures[i][m] is the source texture for the i-th mesh's
+    // material slot m (submesh m), or nullptr/empty to skip that slot. A mesh
+    // with no usable slot texture is left unprocessed.
     ScenePlan AnalyzeScene(fbxsdk::FbxScene* scene,
-                           const std::vector<const atlas::Image*>& meshTextures,
+                           const std::vector<std::vector<const atlas::Image*>>& meshMaterialTextures,
                            core::Logger& logger) const;
 };
 } // namespace polyx::uv

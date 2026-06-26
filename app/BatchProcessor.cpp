@@ -112,6 +112,25 @@ std::string NodePath(fbxsdk::FbxNode* node)
     return path.empty() ? "/" : path;
 }
 
+// Per-polygon material slot index (submesh). Defaults to 0.
+int MaterialIndexOfPolygon(const fbxsdk::FbxMesh* mesh, int poly)
+{
+    if (mesh == nullptr) return 0;
+    const fbxsdk::FbxGeometryElementMaterial* materialElement = mesh->GetElementMaterial(0);
+    if (materialElement == nullptr) return 0;
+    const fbxsdk::FbxLayerElement::EMappingMode mapping = materialElement->GetMappingMode();
+    const auto& indices = materialElement->GetIndexArray();
+    if (mapping == fbxsdk::FbxLayerElement::eAllSame)
+    {
+        return indices.GetCount() > 0 ? indices.GetAt(0) : 0;
+    }
+    if (mapping == fbxsdk::FbxLayerElement::eByPolygon && poly < indices.GetCount())
+    {
+        return indices.GetAt(poly);
+    }
+    return 0;
+}
+
 } // namespace
 
 BatchProcessor::BatchProcessor(const core::AppConfig& config, core::Logger& logger)
@@ -173,8 +192,9 @@ bool BatchProcessor::Run()
 
             std::vector<fbxsdk::FbxMesh*> sceneMeshes;
             CollectMeshes(loaderPtr->Scene()->GetRootNode(), sceneMeshes);
-            const std::vector<const atlas::Image*> meshTextures(sceneMeshes.size(), &package.sourceTexture);
-            uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loaderPtr->Scene(), meshTextures, logger_);
+            const std::vector<std::vector<const atlas::Image*>> meshMaterialTextures(
+                sceneMeshes.size(), std::vector<const atlas::Image*>{ &package.sourceTexture });
+            uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loaderPtr->Scene(), meshMaterialTextures, logger_);
             for (const uv::TileCandidate& tile : scenePlan.uniqueTiles)
             {
                 std::string tileError;
@@ -188,8 +208,7 @@ bool BatchProcessor::Run()
             FilePlan filePlan;
             filePlan.inputFbx = fbxFile;
             filePlan.outputFbx = MakeOutputPath(fbxFile);
-            filePlan.sourceTexturePath = package.sourceTexturePath;
-            filePlan.sourceTexture = package.sourceTexture;
+            filePlan.meshMaterialTextures.assign(sceneMeshes.size(), std::vector<atlas::Image>{ package.sourceTexture });
             filePlan.scenePlan = std::move(scenePlan);
             filePlan.originalLoader = std::move(loaderPtr);
             filePlans.push_back(std::move(filePlan));
@@ -314,10 +333,12 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         CollectMeshes(loaderPtr->Scene()->GetRootNode(), sceneMeshes);
 
         // Match each scene mesh to a manifest entry (nodePath first, then name)
-        // and resolve its texture. meshTextures is aligned to scene-mesh order.
-        std::vector<atlas::Image> meshTextures(sceneMeshes.size());
-        std::vector<int> entryMaterialCount(item.meshes.size(), -1); // -1 = unmatched
-        std::vector<bool> entryTextureFailed(item.meshes.size(), false);
+        // and load that entry's per-material-slot textures. meshMaterialTextures
+        // is aligned to scene-mesh order; [k][m] = mesh k, material slot m.
+        std::vector<std::vector<atlas::Image>> meshMaterialTextures(sceneMeshes.size());
+        std::vector<int> entryMatchedMesh(item.meshes.size(), -1); // scene mesh index, or -1
+        std::vector<bool> entryAnyLoaded(item.meshes.size(), false);
+        std::vector<bool> entryAnyFailed(item.meshes.size(), false);
 
         for (std::size_t k = 0; k < sceneMeshes.size(); ++k)
         {
@@ -354,23 +375,36 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
                 continue;
             }
 
-            const std::filesystem::path absTexture =
-                (jsonDir / std::filesystem::u8path(item.meshes[matchJ].texture)).lexically_normal();
-            const atlas::Image* texture = loadTexture(absTexture);
-            if (texture == nullptr)
+            entryMatchedMesh[matchJ] = static_cast<int>(k);
+            const std::vector<std::string>& slotTextures = item.meshes[matchJ].textures;
+            meshMaterialTextures[k].resize(slotTextures.size());
+            for (std::size_t s = 0; s < slotTextures.size(); ++s)
             {
-                entryTextureFailed[matchJ] = true;
-                continue;
+                if (slotTextures[s].empty())
+                {
+                    continue;
+                }
+                const std::filesystem::path absTexture =
+                    (jsonDir / std::filesystem::u8path(slotTextures[s])).lexically_normal();
+                const atlas::Image* texture = loadTexture(absTexture);
+                if (texture == nullptr)
+                {
+                    entryAnyFailed[matchJ] = true;
+                    continue;
+                }
+                meshMaterialTextures[k][s] = *texture;
+                entryAnyLoaded[matchJ] = true;
             }
-            meshTextures[k] = *texture;
-            fbxsdk::FbxNode* node = sceneMesh->GetNode();
-            entryMaterialCount[matchJ] = node != nullptr ? node->GetMaterialCount() : 0;
         }
 
-        std::vector<const atlas::Image*> texturePtrs(meshTextures.size());
-        for (std::size_t k = 0; k < meshTextures.size(); ++k)
+        std::vector<std::vector<const atlas::Image*>> texturePtrs(meshMaterialTextures.size());
+        for (std::size_t k = 0; k < meshMaterialTextures.size(); ++k)
         {
-            texturePtrs[k] = meshTextures[k].Empty() ? nullptr : &meshTextures[k];
+            texturePtrs[k].resize(meshMaterialTextures[k].size());
+            for (std::size_t s = 0; s < meshMaterialTextures[k].size(); ++s)
+            {
+                texturePtrs[k][s] = meshMaterialTextures[k][s].Empty() ? nullptr : &meshMaterialTextures[k][s];
+            }
         }
 
         uv::ScenePlan scenePlan = analyzer.AnalyzeScene(loaderPtr->Scene(), texturePtrs, logger_);
@@ -388,7 +422,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         FilePlan filePlan;
         filePlan.inputFbx = absFbx;
         filePlan.outputFbx = outputFbx;
-        filePlan.meshTextures = std::move(meshTextures);
+        filePlan.meshMaterialTextures = std::move(meshMaterialTextures);
         filePlan.scenePlan = std::move(scenePlan);
         filePlan.originalLoader = std::move(loaderPtr);
         filePlans.push_back(std::move(filePlan));
@@ -396,13 +430,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         for (std::size_t j = 0; j < item.meshes.size(); ++j)
         {
             manifest::ResultItem& resultItem = result.items[resultIndex[i][j]];
-            if (entryTextureFailed[j])
-            {
-                resultItem.status = "error";
-                resultItem.detail = "texture-load";
-                continue;
-            }
-            if (entryMaterialCount[j] < 0)
+            if (entryMatchedMesh[j] < 0)
             {
                 resultItem.status = "error";
                 resultItem.detail = "mesh-not-found";
@@ -410,12 +438,18 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
                                           ") not found in " + item.fbx);
                 continue;
             }
+            if (!entryAnyLoaded[j])
+            {
+                resultItem.status = "error";
+                resultItem.detail = "texture-load";
+                continue;
+            }
             resultItem.outputFbx = ToUtf8(outputFbx);
             resultItem.uvSet = uvSet;
-            if (entryMaterialCount[j] > 1)
+            if (entryAnyFailed[j])
             {
                 resultItem.status = "warn";
-                resultItem.detail = "submesh:" + std::to_string(entryMaterialCount[j]);
+                resultItem.detail = "texture-load-partial";
             }
             else
             {
@@ -710,25 +744,11 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
         const uv::MeshPlan* meshPlanPtr = (meshIndex < planMeshCount)
             ? &filePlan.scenePlan.meshes[meshIndex] : nullptr;
 
-        const atlas::Image* meshTexture = nullptr;
-        if (meshIndex < filePlan.meshTextures.size() && !filePlan.meshTextures[meshIndex].Empty())
+        if (meshPlanPtr == nullptr || meshPlanPtr->regions.empty())
         {
-            meshTexture = &filePlan.meshTextures[meshIndex];
+            continue; // mesh not atlased -> leave its UVs unchanged
         }
-        else if (!filePlan.sourceTexture.Empty())
-        {
-            meshTexture = &filePlan.sourceTexture;
-        }
-        if (meshTexture == nullptr)
-        {
-            continue; // no source texture for this mesh -> leave its UVs unchanged
-        }
-        texW = meshTexture->width;
-        texH = meshTexture->height;
-        if (meshPlanPtr != nullptr && !meshPlanPtr->regions.empty())
-        {
-            atlasedMeshes.push_back(mesh);
-        }
+        atlasedMeshes.push_back(mesh);
 
         for (int uvSetIndex = 0; uvSetIndex < origMesh->GetElementUVCount(); ++uvSetIndex)
         {
@@ -765,6 +785,8 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
                 {
                     region = &meshPlanPtr->regions[regionId];
                     entry = atlasBuilder.FindEntry(region->tileKey);
+                    texW = region->textureWidth;
+                    texH = region->textureHeight;
                 }
 
                 for (int v = 0; v < polySize; ++v)
@@ -887,20 +909,11 @@ void BatchProcessor::VerifyExportedMesh(const FilePlan& filePlan, fbxsdk::FbxSce
                          " ** GEOMETRY CHANGED **");
         }
 
-        const atlas::Image* srcPtr = nullptr;
-        if (i < filePlan.meshTextures.size() && !filePlan.meshTextures[i].Empty())
-        {
-            srcPtr = &filePlan.meshTextures[i];
-        }
-        else if (!filePlan.sourceTexture.Empty())
-        {
-            srcPtr = &filePlan.sourceTexture;
-        }
-
-        if (!atlasImg.Empty() && srcPtr != nullptr &&
+        const bool hasMatTextures = i < filePlan.meshMaterialTextures.size() && !filePlan.meshMaterialTextures[i].empty();
+        if (!atlasImg.Empty() && hasMatTextures &&
             origMesh->GetElementUVCount() > 0 && outMesh->GetElementUVCount() > 0)
         {
-            const atlas::Image& srcImg = *srcPtr;
+            const std::vector<atlas::Image>& matTextures = filePlan.meshMaterialTextures[i];
             const fbxsdk::FbxGeometryElementUV* origUvEl = origMesh->GetElementUV(0);
             const fbxsdk::FbxGeometryElementUV* outUvEl = outMesh->GetElementUV(0);
             const auto& origDA = origUvEl->GetDirectArray();
@@ -919,10 +932,16 @@ void BatchProcessor::VerifyExportedMesh(const FilePlan& filePlan, fbxsdk::FbxSce
             for (int poly = 0; poly < origMesh->GetPolygonCount() && poly < outMesh->GetPolygonCount(); ++poly)
             {
                 const int polySize = origMesh->GetPolygonSize(poly);
+                const int matIdx = MaterialIndexOfPolygon(origMesh, poly);
+                const atlas::Image* polySrc =
+                    (matIdx >= 0 && matIdx < static_cast<int>(matTextures.size()) && !matTextures[matIdx].Empty())
+                        ? &matTextures[matIdx] : nullptr;
                 for (int v = 0; v < polySize; ++v)
                 {
                     const int curPv = pvIdx;
                     ++pvIdx;
+                    if (polySrc == nullptr) continue;
+                    const atlas::Image& srcImg = *polySrc;
 
                     int origDIdx = curPv;
                     if (origIndexed && curPv < origIA.GetCount())
