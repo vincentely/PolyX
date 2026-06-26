@@ -95,26 +95,40 @@ namespace PolyX.EditorTools
                         if (mesh == null) continue;
 
                         var mats = r.sharedMaterials;
-                        if (mats == null || mats.Length == 0 || mats[0] == null)
+                        if (mats == null || mats.Length == 0)
                         {
                             warnings.Add("No material: " + fbxPath + " :: " + r.name);
                             continue;
                         }
-                        if (mats.Length > 1)
-                        {
-                            warnings.Add("Multi-material/submesh (" + mats.Length + ") on " + fbxPath + " :: " + r.name + " - using slot 0");
-                        }
 
-                        Texture tex = MainTexture(mats[0]);
-                        if (tex == null) { warnings.Add("No main texture: " + fbxPath + " :: " + r.name); continue; }
-                        string texPath = AssetDatabase.GetAssetPath(tex);
-                        if (string.IsNullOrEmpty(texPath)) { warnings.Add("Texture is not an asset: " + fbxPath + " :: " + r.name); continue; }
+                        // Collect the distinct main textures across all material slots.
+                        // Multi-submesh meshes whose slots share ONE texture are fine (the whole
+                        // mesh is atlased against it). Slots using DIFFERENT textures would need
+                        // per-submesh atlasing (not yet supported), so skip them to avoid wrong UVs.
+                        var texPaths = new List<string>();
+                        foreach (var mat in mats)
+                        {
+                            Texture mt = MainTexture(mat);
+                            if (mt == null) continue;
+                            string mp = AssetDatabase.GetAssetPath(mt);
+                            if (!string.IsNullOrEmpty(mp) && !texPaths.Contains(mp)) texPaths.Add(mp);
+                        }
+                        if (texPaths.Count == 0)
+                        {
+                            warnings.Add("No main texture: " + fbxPath + " :: " + r.name);
+                            continue;
+                        }
+                        if (texPaths.Count > 1)
+                        {
+                            warnings.Add("Skipped (submeshes use " + texPaths.Count + " different textures; per-submesh atlas not supported): " + fbxPath + " :: " + r.name);
+                            continue;
+                        }
 
                         fbxEntry.meshes.Add(new MMesh
                         {
                             mesh = mesh.name,
                             nodePath = NodePath(r.transform, root.transform),
-                            texture = RelFromFolder(folder, texPath),
+                            texture = RelFromFolder(folder, texPaths[0]),
                         });
                     }
 
