@@ -89,7 +89,12 @@ int main(int argc, char* argv[])
 
         std::error_code ec;
         const std::filesystem::path jsonDir = std::filesystem::absolute(config.manifestPath, ec).parent_path();
-        const std::filesystem::path outputDir = ExeDir(executableName) / "output";
+        std::string folderName = jsonDir.filename().u8string();
+        if (folderName.empty())
+        {
+            folderName = "manifest";
+        }
+        const std::filesystem::path outputDir = ExeDir(executableName) / std::filesystem::u8path("output_" + folderName);
 
         logger.Info("Manifest: " + config.manifestPath.string() + " (" + std::to_string(request.items.size()) + " items)");
         logger.Info("Output dir: " + outputDir.string());

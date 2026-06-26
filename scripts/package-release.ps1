@@ -24,7 +24,7 @@ PolyX $Version
 
 Usage (drag and drop):
   Drag a PolyX manifest .json onto PolyX.exe.
-  Output is written to an 'output' folder next to PolyX.exe:
+  Output is written to an 'output_<manifest folder name>' folder next to PolyX.exe:
     atlas.png       the merged atlas
     <FBXs>          meshes with UVs remapped into the atlas (mirrored layout)
     result.json     per-mesh status

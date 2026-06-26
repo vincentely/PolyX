@@ -24,6 +24,7 @@ namespace PolyX.EditorTools
 
         [SerializeField] private string _folder = DefaultFolder;
         [SerializeField] private string _excludeFolders = "";
+        [SerializeField] private Material[] _excludeMaterials = new Material[0];
 
         [MenuItem("Tools/PolyX/Manifest Exporter")]
         public static void Open()
@@ -55,6 +56,11 @@ namespace PolyX.EditorTools
             EditorGUILayout.LabelField("Exclude folders (name or sub-path; one per line or comma-separated):",
                 EditorStyles.wordWrappedLabel);
             _excludeFolders = EditorGUILayout.TextArea(_excludeFolders, GUILayout.Height(48));
+
+            var so = new SerializedObject(this);
+            so.Update();
+            EditorGUILayout.PropertyField(so.FindProperty("_excludeMaterials"), new GUIContent("Exclude Materials"), true);
+            so.ApplyModifiedProperties();
             EditorGUILayout.Space();
 
             using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(_folder)))
@@ -80,12 +86,13 @@ namespace PolyX.EditorTools
                 .Select(s => s.Trim().Replace('\\', '/').Trim('/'))
                 .Where(s => s.Length > 0)
                 .ToList();
+            var excludeMats = new HashSet<Material>((_excludeMaterials ?? new Material[0]).Where(m => m != null));
 
             string[] fbxGuids = AssetDatabase.FindAssets("t:Model", new[] { folder });
             var items = new List<MFbx>();
             var warnings = new List<string>();
+            var excluded = new List<string>();
             int fbxCount = 0;
-            int excludedCount = 0;
 
             try
             {
@@ -93,7 +100,7 @@ namespace PolyX.EditorTools
                 {
                     string fbxPath = AssetDatabase.GUIDToAssetPath(fbxGuids[i]);
                     if (!fbxPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (IsExcluded(fbxPath, excludes)) { excludedCount++; continue; }
+                    if (IsExcluded(fbxPath, excludes)) { excluded.Add(fbxPath + "  [excluded folder]"); continue; }
                     fbxCount++;
                     EditorUtility.DisplayProgressBar("PolyX", fbxPath, (float)i / Mathf.Max(1, fbxGuids.Length));
 
@@ -108,14 +115,21 @@ namespace PolyX.EditorTools
 
                         if (HasTilingUVs(mesh))
                         {
-                            warnings.Add("Skipped (tiling UVs outside 0..1; cannot atlas): " + fbxPath + " :: " + r.name);
+                            excluded.Add(fbxPath + " :: " + r.name + "  [tiling UVs outside 0..1]");
                             continue;
                         }
 
                         var mats = r.sharedMaterials;
                         if (mats == null || mats.Length == 0)
                         {
-                            warnings.Add("No material: " + fbxPath + " :: " + r.name);
+                            excluded.Add(fbxPath + " :: " + r.name + "  [no material]");
+                            continue;
+                        }
+
+                        Material hitMat = mats.FirstOrDefault(m => m != null && excludeMats.Contains(m));
+                        if (hitMat != null)
+                        {
+                            excluded.Add(fbxPath + " :: " + r.name + "  [excluded material: " + hitMat.name + "]");
                             continue;
                         }
 
@@ -140,7 +154,7 @@ namespace PolyX.EditorTools
                         }
                         if (!anyTexture)
                         {
-                            warnings.Add("No main texture: " + fbxPath + " :: " + r.name);
+                            excluded.Add(fbxPath + " :: " + r.name + "  [no main texture]");
                             continue;
                         }
 
@@ -180,13 +194,14 @@ namespace PolyX.EditorTools
             AssetDatabase.ImportAsset(outAssetPath);
 
             int meshCount = items.Sum(e => e.meshes.Count);
+            foreach (string line in excluded) Debug.Log("[PolyX] excluded - " + line);
             foreach (string w in warnings) Debug.LogWarning("[PolyX] " + w);
-            Debug.Log("[PolyX] Exported " + meshCount + " meshes across " + items.Count + " FBX (excluded " + excludedCount + ") -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
+            Debug.Log("[PolyX] Exported " + meshCount + " meshes across " + items.Count + " FBX (excluded " + excluded.Count + ") -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
 
             var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(outAssetPath);
             if (asset != null) EditorGUIUtility.PingObject(asset);
             EditorUtility.DisplayDialog("PolyX",
-                "Exported " + meshCount + " meshes across " + items.Count + " FBX.\nExcluded: " + excludedCount + " FBX\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
+                "Exported " + meshCount + " meshes across " + items.Count + " FBX.\nExcluded: " + excluded.Count + " (see Console)\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
                 "OK");
         }
 

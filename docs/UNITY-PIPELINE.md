@@ -50,7 +50,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 > C++ 按 `nodePath`（兜底 `mesh` 名）在 FBX 内**逐网格**匹配，各自用自己的贴图重映射 UV、合进同一张共享图集。
 > 不区分 palette/full：manifest 里有什么就合，要不要收进来由人在 Unity 里决定（选哪些导出）。
 
-**路径与输出约定**：所有路径相对于 request.json 所在目录。C++ 端 `PolyX <request.json>` 在 **可执行文件所在目录下创建 `output/`**，写出 `atlas.png` + 与 manifest 相对布局镜像的所有 FBX + `result.json`。
+**路径与输出约定**：所有路径相对于 request.json 所在目录。C++ 端 `PolyX <request.json>` 在 **可执行文件所在目录下创建 `output_<json 所在目录名>/`**（如 `.../Mesh/Pet` → `output_Pet`），写出 `atlas.png` + 与 manifest 相对布局镜像的所有 FBX + `result.json`。
 
 ## 结果文件 result.json（C++ → Unity）
 
@@ -79,7 +79,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | **nodePath 主、mesh 名兜底** | C++ 按 `nodePath` 在 FBX 节点树定位；不中回退 `mesh` 名；仍不中 → `error/mesh-not-found` |
 | **粒度到 mesh；submesh 警告** | 检到网格多材质组 → `warn/submesh:N`，仍按给定贴图整体重映射 |
 | **简化、两端易解析** | JSON + JsonUtility（Unity）/ nlohmann（C++） |
-| **镜像目录，便于覆盖回工程** | `outputFbx = <exe>/output / (fbx 相对 manifest 的路径)` |
+| **镜像目录，便于覆盖回工程** | `outputFbx = <exe>/output_<目录名> / (fbx 相对 manifest 的路径)` |
 | **处理所有条目** | 不区分 palette/full；manifest 里有什么就合进同一张图集 |
 
 ## 三个必须注意的坑
@@ -96,4 +96,4 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 - **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 逐 FBX 加载 → **按 nodePath/名 把场景网格匹配到 manifest 条目、各用自己的贴图分析**（`UVAnalyzer::AnalyzeScene` 现接收 per-mesh 贴图数组）→ 单张共享图集 → 逐网格重映射 UV、只对已合图的网格重指材质 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`，输出到 `<exe目录>/output/`。验证：PetScene 33 FBX → 2048×2048，33 ok，0 mismatch；折叠（folder）模式与单测仍绿。
   - **多材质 / submesh 已支持**：按多边形材质索引分别用 `textures[m]` 分析、各自重映射、合进同一图集；缺贴图的槽保持原样。匹配不到的网格保持原样（不改 UV、不重指材质）。
 - **Phase A（Unity 侧）**：[unity/Editor/PolyXManifestExporter.cs](../unity/Editor/PolyXManifestExporter.cs)（菜单 Tools › PolyX › Manifest Exporter）扫描 FBX 目录、解析主贴图、导出相对路径 request.json。
-- **回写（手动）**：把 `output/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。
+- **回写（手动）**：把 `output_<目录名>/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。
