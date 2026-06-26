@@ -137,6 +137,26 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
             const int directCount = directArray.GetCount();
             const int polyCount = mesh->GetPolygonCount();
 
+            // Safety net: a mesh whose UVs clearly leave [0,1] tiles its texture and
+            // cannot be atlased -> leave it unprocessed. The exporter normally excludes
+            // these already; the loose threshold here avoids false positives on bleed.
+            bool tiling = false;
+            for (int d = 0; d < directCount && !tiling; ++d)
+            {
+                const fbxsdk::FbxVector2 uv = directArray.GetAt(d);
+                if (uv[0] < -0.5 || uv[0] > 1.5 || uv[1] < -0.5 || uv[1] > 1.5)
+                {
+                    tiling = true;
+                }
+            }
+            if (tiling)
+            {
+                logger.Warn(std::string("Skipping tiling/continuous-UV mesh: ") + mesh->GetName());
+                result.meshes.push_back(std::move(meshPlan));
+                ++meshIdx;
+                continue;
+            }
+
             // Per-polygon material index (submesh). Defaults to slot 0.
             const fbxsdk::FbxGeometryElementMaterial* materialElement = mesh->GetElementMaterial(0);
             const auto materialIndexOf = [&](int poly) -> int

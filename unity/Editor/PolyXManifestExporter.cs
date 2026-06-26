@@ -94,6 +94,12 @@ namespace PolyX.EditorTools
                         Mesh mesh = MeshOf(r);
                         if (mesh == null) continue;
 
+                        if (HasTilingUVs(mesh))
+                        {
+                            warnings.Add("Skipped (tiling UVs outside 0..1; cannot atlas): " + fbxPath + " :: " + r.name);
+                            continue;
+                        }
+
                         var mats = r.sharedMaterials;
                         if (mats == null || mats.Length == 0)
                         {
@@ -177,6 +183,22 @@ namespace PolyX.EditorTools
             if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
             var mf = r.GetComponent<MeshFilter>();
             return mf != null ? mf.sharedMesh : null;
+        }
+
+        // A mesh whose UVs leave [0,1] tiles/wraps its texture (二方/四方连续);
+        // an atlas region cannot wrap, so such meshes are excluded from atlasing.
+        private static bool HasTilingUVs(Mesh mesh)
+        {
+            const float eps = 0.01f;
+            var uv = mesh.uv;
+            for (int i = 0; i < uv.Length; i++)
+            {
+                if (uv[i].x < -eps || uv[i].x > 1f + eps || uv[i].y < -eps || uv[i].y > 1f + eps)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         // URP main map is _BaseMap; Built-in is _MainTex. Fall back to mainTexture.
