@@ -11,6 +11,9 @@ if (-not (Test-Path $exePath)) {
     throw "Release executable not found: $exePath"
 }
 
+if (Test-Path $PackageDir) {
+    Remove-Item $PackageDir -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
 
 Copy-Item $exePath -Destination $PackageDir -Force
