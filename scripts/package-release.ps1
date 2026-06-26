@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDir = "out/release-vs/Release",
+    [string]$BuildDir = "out/build/x64-release",
     [string]$PackageDir = "dist/PolyX-0.2.0-win64",
     [string]$Version = "0.2.0"
 )
@@ -19,14 +19,22 @@ $readmePath = Join-Path $PackageDir "README.txt"
 $readme = @"
 PolyX $Version
 
-Usage:
-  1. Put your source assets under a root folder with `input` and `output` subfolders.
-  2. Run `PolyX.exe <root-folder>` or launch it and enter the root folder path when prompted.
-  3. Results will be written to `<root-folder>\output`.
+Usage (drag and drop):
+  Drag a PolyX manifest .json onto PolyX.exe.
+  Output is written to an 'output' folder next to PolyX.exe:
+    atlas.png       the merged atlas
+    <FBXs>          meshes with UVs remapped into the atlas (mirrored layout)
+    result.json     per-mesh status
+  The window pauses at the end so you can read the summary.
+
+Or from a command line:
+  PolyX.exe path\to\manifest.json
+
+The manifest is produced by the Unity exporter
+(menu: Tools > PolyX > Manifest Exporter).
 
 Notes:
-  - This package was built as a static release and does not require libfbxsdk.dll.
-  - On Windows, GDI+ is provided by the operating system.
+  - Static build: does not require libfbxsdk.dll. GDI+ is provided by Windows.
 "@
 Set-Content -Path $readmePath -Value $readme -Encoding ASCII
 
