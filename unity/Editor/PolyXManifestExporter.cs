@@ -23,8 +23,6 @@ namespace PolyX.EditorTools
         private const string ManifestName = "polyx_manifest.json";
 
         [SerializeField] private string _folder = DefaultFolder;
-        [SerializeField] private string _atlasSize = "auto";
-        [SerializeField] private bool _includeInactive = true;
 
         [MenuItem("Tools/PolyX/Manifest Exporter")]
         public static void Open()
@@ -53,8 +51,6 @@ namespace PolyX.EditorTools
                     }
                 }
             }
-            _atlasSize = EditorGUILayout.TextField("Atlas Size", _atlasSize);
-            _includeInactive = EditorGUILayout.Toggle("Include Inactive", _includeInactive);
             EditorGUILayout.Space();
 
             using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(_folder)))
@@ -93,7 +89,7 @@ namespace PolyX.EditorTools
                     if (root == null) { warnings.Add("Cannot load model: " + fbxPath); continue; }
 
                     var fbxEntry = new MFbx { fbx = RelFromFolder(folder, fbxPath) };
-                    foreach (var r in root.GetComponentsInChildren<Renderer>(_includeInactive))
+                    foreach (var r in root.GetComponentsInChildren<Renderer>(true))
                     {
                         Mesh mesh = MeshOf(r);
                         if (mesh == null) continue;
@@ -130,7 +126,7 @@ namespace PolyX.EditorTools
                 EditorUtility.ClearProgressBar();
             }
 
-            var manifest = new Manifest { version = 1, atlasSize = _atlasSize, items = items };
+            var manifest = new Manifest { version = 1, atlasSize = "auto", items = items };
             string json = JsonUtility.ToJson(manifest, true);
             string outAssetPath = folder + "/" + ManifestName;
             File.WriteAllText(AbsFromAsset(outAssetPath), json, new UTF8Encoding(false));
