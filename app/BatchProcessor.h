@@ -43,7 +43,8 @@ private:
         std::filesystem::path inputFbx;
         std::filesystem::path outputFbx;
         std::filesystem::path sourceTexturePath;
-        atlas::Image sourceTexture;
+        atlas::Image sourceTexture;                 // folder mode: one texture for all meshes
+        std::vector<atlas::Image> meshTextures;     // manifest mode: per-mesh (scene order)
         uv::ScenePlan scenePlan;
         // Scene loaded during analysis, kept alive (pristine) to reuse as the
         // export-time reference instead of re-loading the input file.
@@ -73,7 +74,8 @@ private:
 
     void ApplySceneMaterials(fbxsdk::FbxScene* scene,
                              const std::filesystem::path& atlasRelativePath,
-                             const std::string& uvSetName);
+                             const std::string& uvSetName,
+                             const std::vector<fbxsdk::FbxMesh*>& atlasedMeshes);
 
     void CollectMeshes(fbxsdk::FbxNode* node, std::vector<fbxsdk::FbxMesh*>& meshes) const;
 

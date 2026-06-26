@@ -76,7 +76,7 @@ namespace PolyX.EditorTools
             }
 
             string[] fbxGuids = AssetDatabase.FindAssets("t:Model", new[] { folder });
-            var items = new List<MItem>();
+            var items = new List<MFbx>();
             var warnings = new List<string>();
             int fbxCount = 0;
 
@@ -92,6 +92,7 @@ namespace PolyX.EditorTools
                     var root = AssetDatabase.LoadAssetAtPath<GameObject>(fbxPath);
                     if (root == null) { warnings.Add("Cannot load model: " + fbxPath); continue; }
 
+                    var fbxEntry = new MFbx { fbx = RelFromFolder(folder, fbxPath) };
                     foreach (var r in root.GetComponentsInChildren<Renderer>(_includeInactive))
                     {
                         Mesh mesh = MeshOf(r);
@@ -113,14 +114,15 @@ namespace PolyX.EditorTools
                         string texPath = AssetDatabase.GetAssetPath(tex);
                         if (string.IsNullOrEmpty(texPath)) { warnings.Add("Texture is not an asset: " + fbxPath + " :: " + r.name); continue; }
 
-                        items.Add(new MItem
+                        fbxEntry.meshes.Add(new MMesh
                         {
-                            fbx = RelFromFolder(folder, fbxPath),
                             mesh = mesh.name,
                             nodePath = NodePath(r.transform, root.transform),
                             texture = RelFromFolder(folder, texPath),
                         });
                     }
+
+                    if (fbxEntry.meshes.Count > 0) items.Add(fbxEntry);
                 }
             }
             finally
@@ -134,13 +136,14 @@ namespace PolyX.EditorTools
             File.WriteAllText(AbsFromAsset(outAssetPath), json, new UTF8Encoding(false));
             AssetDatabase.ImportAsset(outAssetPath);
 
+            int meshCount = items.Sum(e => e.meshes.Count);
             foreach (string w in warnings) Debug.LogWarning("[PolyX] " + w);
-            Debug.Log("[PolyX] Exported " + items.Count + " mesh entries from " + fbxCount + " FBX -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
+            Debug.Log("[PolyX] Exported " + meshCount + " meshes across " + items.Count + " FBX -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
 
             var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(outAssetPath);
             if (asset != null) EditorGUIUtility.PingObject(asset);
             EditorUtility.DisplayDialog("PolyX",
-                "Exported " + items.Count + " entries from " + fbxCount + " FBX.\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
+                "Exported " + meshCount + " meshes across " + items.Count + " FBX.\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
                 "OK");
         }
 
@@ -208,12 +211,18 @@ namespace PolyX.EditorTools
         }
 
         [Serializable]
-        private class MItem
+        private class MMesh
         {
-            public string fbx;
             public string mesh;
             public string nodePath;
             public string texture;
+        }
+
+        [Serializable]
+        private class MFbx
+        {
+            public string fbx;
+            public List<MMesh> meshes = new List<MMesh>();
         }
 
         [Serializable]
@@ -221,7 +230,7 @@ namespace PolyX.EditorTools
         {
             public int version = 1;
             public string atlasSize = "auto";
-            public List<MItem> items = new List<MItem>();
+            public List<MFbx> items = new List<MFbx>();
         }
     }
 }

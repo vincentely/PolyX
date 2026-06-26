@@ -78,9 +78,21 @@ bool ReadRequest(const std::filesystem::path& file, Request& out, std::string* e
             }
             RequestItem item;
             item.fbx = GetString(entry, "fbx");
-            item.mesh = GetString(entry, "mesh");
-            item.nodePath = GetString(entry, "nodePath");
-            item.texture = GetString(entry, "texture");
+            if (const auto meshIt = entry.find("meshes"); meshIt != entry.end() && meshIt->is_array())
+            {
+                for (const json& meshNode : *meshIt)
+                {
+                    if (!meshNode.is_object())
+                    {
+                        continue;
+                    }
+                    MeshEntry meshEntry;
+                    meshEntry.mesh = GetString(meshNode, "mesh");
+                    meshEntry.nodePath = GetString(meshNode, "nodePath");
+                    meshEntry.texture = GetString(meshNode, "texture");
+                    item.meshes.push_back(std::move(meshEntry));
+                }
+            }
             out.items.push_back(std::move(item));
         }
     }

@@ -20,25 +20,30 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
   "atlasSize": "auto",
   "items": [
     {
-      "fbx":         "Pet_Grass02.fbx",
-      "mesh":        "Pet_Grass02",
-      "nodePath":    "/Pet_Grass02",
-      "texture":     "../../../Texture/PetScene/petpark_guanmu_02.png"
+      "fbx": "Pet_Grass02.fbx",
+      "meshes": [
+        { "mesh": "Pet_Grass02", "nodePath": "/Pet_Grass02",
+          "texture": "../../../Texture/PetScene/petpark_guanmu_02.png" }
+      ]
     }
   ]
 }
 ```
 
+结构是 **一个 FBX → 多个 mesh**，每个 mesh 带自己的贴图（可以各不相同）。
+
 | 字段 | 说明 |
 |------|------|
 | `version` | 契约版本，当前 `1` |
 | `atlasSize` | `"auto"` \| `"1024"` \| `"1024x512"` |
-| `items[].fbx` | 源 FBX 路径，**相对于本 JSON 所在目录**（同一 FBX 的多网格重复此列） |
-| `items[].mesh` | 网格名（匹配兜底） |
-| `items[].nodePath` | `/名/名/…` 节点路径（主匹配键） |
-| `items[].texture` | 源贴图路径，**相对于本 JSON 所在目录**（贴图常在别处，故多为 `../`） |
+| `items[].fbx` | 源 FBX 路径，**相对于本 JSON 所在目录** |
+| `items[].meshes[]` | 该 FBX 下的一个或多个网格 |
+| `…meshes[].mesh` | 网格名（匹配兜底） |
+| `…meshes[].nodePath` | `/名/名/…` 节点路径（主匹配键） |
+| `…meshes[].texture` | 该网格的源贴图路径，**相对于本 JSON 所在目录**（多为 `../`） |
 
-> 不区分 palette/full：manifest 里有什么就合进同一张图集，要不要收进来由人在 Unity 里决定（选哪些导出）。
+> C++ 按 `nodePath`（兜底 `mesh` 名）在 FBX 内**逐网格**匹配，各自用自己的贴图重映射 UV、合进同一张共享图集。
+> 不区分 palette/full：manifest 里有什么就合，要不要收进来由人在 Unity 里决定（选哪些导出）。
 
 **路径与输出约定**：所有路径相对于 request.json 所在目录。C++ 端 `PolyX <request.json>` 在 **可执行文件所在目录下创建 `output/`**，写出 `atlas.png` + 与 manifest 相对布局镜像的所有 FBX + `result.json`。
 
@@ -83,7 +88,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 ## 实现状态
 
 - **Phase A（已完成）**：JSON 读写层 [`app/Manifest.h`](../app/Manifest.h) / `app/Manifest.cpp`（结构体 + `ReadRequest` / `WriteResult`），单元测试覆盖。`json.hpp` 已 vendored 并接入 CMake。现有目录模式不受影响。
-- **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 按 fbx 分组 → 复用现有 per-FBX 分析/装箱/导出/校验内核 → 单张共享图集 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`（`.json` 入参即进 manifest 模式），输出到 `<exe目录>/output/`。已在真实 Office PetScene 数据（33 FBX）跑通：atlas 2048×2048，0 error / 0 warn / 0 mismatch。
-  - **当前限制**：单个 FBX 含多网格时，所有网格统一用该 FBX 第一个 item 的贴图、不按 `nodePath` 区分（PetScene 一网格一贴图，未触发）；真正 per-mesh 按 nodePath 匹配 + 多贴图待后续。
+- **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 逐 FBX 加载 → **按 nodePath/名 把场景网格匹配到 manifest 条目、各用自己的贴图分析**（`UVAnalyzer::AnalyzeScene` 现接收 per-mesh 贴图数组）→ 单张共享图集 → 逐网格重映射 UV、只对已合图的网格重指材质 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`，输出到 `<exe目录>/output/`。验证：PetScene 33 FBX → 2048×2048，33 ok，0 mismatch；折叠（folder）模式与单测仍绿。
+  - 多材质网格（submesh）→ `warn/submesh:N`，仍按该网格贴图整体重映射。匹配不到的网格保持原样（不改 UV、不重指材质）。
 - **Phase A（Unity 侧）**：[unity/Editor/PolyXManifestExporter.cs](../unity/Editor/PolyXManifestExporter.cs)（菜单 Tools › PolyX › Manifest Exporter）扫描 FBX 目录、解析主贴图、导出相对路径 request.json。
 - **回写（手动）**：把 `output/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。

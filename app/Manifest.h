@@ -7,12 +7,17 @@
 namespace polyx::manifest
 {
 // Request: what Unity exports for PolyX to merge. See docs/UNITY-PIPELINE.md.
-struct RequestItem
+struct MeshEntry
 {
-    std::string fbx;          // absolute path to the source FBX
     std::string mesh;         // mesh name (fallback identity)
     std::string nodePath;     // "/Name/Name/..." node path (primary identity)
-    std::string texture;      // path to the source texture
+    std::string texture;      // path to the source texture for this mesh
+};
+
+struct RequestItem
+{
+    std::string fbx;                  // path to the source FBX
+    std::vector<MeshEntry> meshes;    // one or more meshes inside this FBX
 };
 
 struct Request

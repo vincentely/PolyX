@@ -57,8 +57,10 @@ struct ScenePlan
 class UVAnalyzer
 {
 public:
+    // meshTextures[i] is the source texture for the i-th mesh (scene traversal
+    // order), or nullptr/empty to leave that mesh unprocessed.
     ScenePlan AnalyzeScene(fbxsdk::FbxScene* scene,
-                           const atlas::Image& sourceTexture,
+                           const std::vector<const atlas::Image*>& meshTextures,
                            core::Logger& logger) const;
 };
 } // namespace polyx::uv

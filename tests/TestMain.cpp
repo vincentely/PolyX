@@ -382,8 +382,10 @@ void TestManifestRoundTrip()
   "outputRoot": "C:/proj/Out",
   "atlasOut": "C:/proj/Out/atlas.png",
   "items": [
-    { "fbx": "C:/a/M.fbx", "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga" },
-    { "fbx": "C:/a/M.fbx", "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T2.tga" }
+    { "fbx": "C:/a/M.fbx", "meshes": [
+      { "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga" },
+      { "mesh": "Hat", "nodePath": "/M/Hat", "texture": "C:/a/T2.tga" }
+    ] }
   ]
 })";
     }
@@ -396,14 +398,19 @@ void TestManifestRoundTrip()
     CHECK(req.version == 1);
     CHECK(req.atlasSize == "auto");
     CHECK(req.outputRoot == "C:/proj/Out");
-    CHECK(req.items.size() == 2U);
-    if (req.items.size() == 2U)
+    CHECK(req.items.size() == 1U);
+    if (req.items.size() == 1U)
     {
-        CHECK(req.items[0].mesh == "Body");
-        CHECK(req.items[0].nodePath == "/M/Body");
-        CHECK(req.items[0].texture == "C:/a/T.tga");
-        CHECK(req.items[1].mesh == "Hat");
-        CHECK(req.items[1].texture == "C:/a/T2.tga");
+        CHECK(req.items[0].fbx == "C:/a/M.fbx");
+        CHECK(req.items[0].meshes.size() == 2U);
+        if (req.items[0].meshes.size() == 2U)
+        {
+            CHECK(req.items[0].meshes[0].mesh == "Body");
+            CHECK(req.items[0].meshes[0].nodePath == "/M/Body");
+            CHECK(req.items[0].meshes[0].texture == "C:/a/T.tga");
+            CHECK(req.items[0].meshes[1].mesh == "Hat");
+            CHECK(req.items[0].meshes[1].texture == "C:/a/T2.tga");
+        }
     }
     fs::remove(reqPath);
 

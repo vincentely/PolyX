@@ -47,7 +47,7 @@ std::string BuildTileKey(const atlas::Image& image)
 } // namespace
 
 ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
-                                   const atlas::Image& sourceTexture,
+                                   const std::vector<const atlas::Image*>& meshTextures,
                                    core::Logger& logger) const
 {
     ScenePlan result;
@@ -58,19 +58,13 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
         return result;
     }
 
-    if (sourceTexture.Empty())
-    {
-        logger.Warn("Source texture is empty during UV analysis.");
-        return result;
-    }
-
     std::vector<fbxsdk::FbxMesh*> meshes;
     CollectMeshes(scene->GetRootNode(), meshes);
 
     std::unordered_map<std::string, std::size_t> uniqueTileIndex;
     result.meshes.reserve(meshes.size());
 
-    const auto addTile = [&](const atlas::Rect& rect) -> std::string
+    const auto addTile = [&](const atlas::Image& sourceTexture, const atlas::Rect& rect) -> std::string
     {
         const atlas::Image img = atlas::ExtractSubImage(sourceTexture, rect, nullptr);
         if (img.Empty())
@@ -89,11 +83,15 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
     int meshIdx = 0;
     for (fbxsdk::FbxMesh* mesh : meshes)
     {
-        if (mesh == nullptr)
+        const atlas::Image* meshTexture =
+            (static_cast<std::size_t>(meshIdx) < meshTextures.size()) ? meshTextures[meshIdx] : nullptr;
+        if (mesh == nullptr || meshTexture == nullptr || meshTexture->Empty())
         {
+            result.meshes.push_back(MeshPlan{}); // unprocessed mesh keeps index alignment
             ++meshIdx;
             continue;
         }
+        const atlas::Image& sourceTexture = *meshTexture;
 
         MeshPlan meshPlan;
         const int uvSetCount = mesh->GetElementUVCount();
@@ -216,7 +214,7 @@ ScenePlan UVAnalyzer::AnalyzeScene(fbxsdk::FbxScene* scene,
                 if (clampedW <= 0 || clampedH <= 0) continue;
 
                 const atlas::Rect regionRect{ clampedX, clampedY, clampedW, clampedH };
-                const std::string tileKey = addTile(regionRect);
+                const std::string tileKey = addTile(sourceTexture, regionRect);
                 if (tileKey.empty()) continue;
 
                 const int regionId = static_cast<int>(meshPlan.regions.size());
