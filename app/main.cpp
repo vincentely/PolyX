@@ -109,6 +109,19 @@ int main(int argc, char* argv[])
             logger.Info("Result written: " + resultPath.string());
         }
 
+        std::size_t okCount = 0;
+        std::size_t warnCount = 0;
+        std::size_t errorCount = 0;
+        for (const polyx::manifest::ResultItem& item : result.items)
+        {
+            if (item.status == "ok") ++okCount;
+            else if (item.status == "warn") ++warnCount;
+            else ++errorCount;
+        }
+        logger.Info("Done: atlas " + std::to_string(result.atlasWidth) + "x" + std::to_string(result.atlasHeight) +
+                    "  meshes ok=" + std::to_string(okCount) + " warn=" + std::to_string(warnCount) +
+                    " error=" + std::to_string(errorCount));
+
         PauseForKeyPress();
         return ok ? 0 : 1;
     }
