@@ -127,9 +127,9 @@ void TestAtlasAutoSizeGrowsPastMembers()
     }
 
     const atlas::Image& atlasImage = builder.GetAtlasImage();
-    CHECK(atlasImage.width == atlasImage.height);
-    CHECK((atlasImage.width & (atlasImage.width - 1)) == 0); // power of two
-    CHECK(atlasImage.width >= 32);
+    CHECK((atlasImage.width & (atlasImage.width - 1)) == 0);   // width power of two
+    CHECK((atlasImage.height & (atlasImage.height - 1)) == 0); // height power of two
+    CHECK(atlasImage.width >= 32 && atlasImage.height >= 32);
 
     const std::vector<atlas::AtlasEntry>& entries = builder.Entries();
     CHECK(entries.size() == 5U);

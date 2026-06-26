@@ -14,36 +14,6 @@ namespace polyx::atlas
 {
 namespace
 {
-std::uint64_t CeilSqrt(std::uint64_t value)
-{
-    if (value <= 1U)
-    {
-        return value;
-    }
-
-    const auto squareLessThan = [](std::uint64_t side, std::uint64_t area)
-    {
-        return side < area / side || (side == area / side && area % side != 0U);
-    };
-
-    std::uint64_t root = static_cast<std::uint64_t>(std::sqrt(static_cast<long double>(value)));
-    while (squareLessThan(root, value))
-    {
-        ++root;
-    }
-    while (root > 1U)
-    {
-        const std::uint64_t smaller = root - 1U;
-        const std::uint64_t ceilQuotient = (value / smaller) + (value % smaller == 0U ? 0U : 1U);
-        if (smaller < ceilQuotient)
-        {
-            break;
-        }
-        --root;
-    }
-    return root;
-}
-
 bool RoundUpToPowerOfTwoInt(std::uint64_t value, int& result)
 {
     constexpr int kMaxPowerOfTwoInt = 1 << 30;
@@ -234,28 +204,21 @@ bool AtlasBuilder::AddTile(const std::string& key, const Image& image, const Rec
     return true;
 }
 
-bool AtlasBuilder::CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetSize, std::string* errorMessage) const
+bool AtlasBuilder::CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetWidth, int& targetHeight, std::string* errorMessage) const
 {
-    std::uint64_t totalArea = 0U;
     int maxTileDimension = 1;
     for (const PendingTile& tile : tiles_)
     {
         maxTileDimension = std::max(maxTileDimension, std::max(tile.image.width, tile.image.height));
-        const std::uint64_t tileArea = static_cast<std::uint64_t>(tile.image.width) * static_cast<std::uint64_t>(tile.image.height);
-        if (tileArea > std::numeric_limits<std::uint64_t>::max() - totalArea)
-        {
-            if (errorMessage != nullptr)
-            {
-                *errorMessage = "Atlas tile area is too large.";
-            }
-            return false;
-        }
-        totalArea += tileArea;
     }
 
-    const std::uint64_t minimumSide = std::max<std::uint64_t>(static_cast<std::uint64_t>(maxTileDimension), CeilSqrt(totalArea));
-    int candidateSize = 0;
-    if (!RoundUpToPowerOfTwoInt(minimumSide, candidateSize))
+    // Start at the smallest power-of-two square that fits the largest tile, then
+    // grow one dimension at a time -- double the smaller side (ties grow height) --
+    // e.g. 1024x1024 -> 1024x2048 -> 2048x2048, instead of jumping to the next
+    // square. Downstream UV remap uses width/height independently, so a rectangular
+    // atlas is fine and wastes less space.
+    int startSize = 0;
+    if (!RoundUpToPowerOfTwoInt(static_cast<std::uint64_t>(maxTileDimension), startSize))
     {
         if (errorMessage != nullptr)
         {
@@ -264,15 +227,20 @@ bool AtlasBuilder::CalculateAutoTargetSize(const std::vector<std::size_t>& order
         return false;
     }
 
+    int width = startSize;
+    int height = startSize;
+    constexpr int kMaxAtlasDimension = 1 << 14; // 16384
+
     while (true)
     {
-        if (PackTiles(order, candidateSize, candidateSize, nullptr, nullptr))
+        if (PackTiles(order, width, height, nullptr, nullptr))
         {
-            targetSize = candidateSize;
+            targetWidth = width;
+            targetHeight = height;
             return true;
         }
 
-        if (candidateSize > (1 << 29))
+        if (width >= kMaxAtlasDimension && height >= kMaxAtlasDimension)
         {
             if (errorMessage != nullptr)
             {
@@ -280,7 +248,19 @@ bool AtlasBuilder::CalculateAutoTargetSize(const std::vector<std::size_t>& order
             }
             return false;
         }
-        candidateSize *= 2;
+
+        if (height <= width && height < kMaxAtlasDimension)
+        {
+            height *= 2;
+        }
+        else if (width < kMaxAtlasDimension)
+        {
+            width *= 2;
+        }
+        else
+        {
+            height *= 2;
+        }
     }
 }
 
@@ -482,13 +462,14 @@ bool AtlasBuilder::Build(std::string* errorMessage)
 
     if (autoSize_)
     {
-        int targetSize = 0;
-        if (!CalculateAutoTargetSize(order, targetSize, errorMessage))
+        int autoWidth = 0;
+        int autoHeight = 0;
+        if (!CalculateAutoTargetSize(order, autoWidth, autoHeight, errorMessage))
         {
             return false;
         }
-        targetWidth_ = targetSize;
-        targetHeight_ = targetSize;
+        targetWidth_ = autoWidth;
+        targetHeight_ = autoHeight;
     }
 
     if (!PackTiles(order, targetWidth_, targetHeight_, &entries_, errorMessage))

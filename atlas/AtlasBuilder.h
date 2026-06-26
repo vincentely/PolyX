@@ -65,7 +65,7 @@ private:
         Rect sourceRect;
     };
 
-    bool CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetSize, std::string* errorMessage) const;
+    bool CalculateAutoTargetSize(const std::vector<std::size_t>& order, int& targetWidth, int& targetHeight, std::string* errorMessage) const;
     bool PackTiles(const std::vector<std::size_t>& order,
                    int targetWidth,
                    int targetHeight,
