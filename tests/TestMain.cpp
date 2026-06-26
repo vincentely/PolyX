@@ -384,7 +384,7 @@ void TestManifestRoundTrip()
   "items": [
     { "fbx": "C:/a/M.fbx", "meshes": [
       { "mesh": "Body", "nodePath": "/M/Body", "texture": "C:/a/T.tga" },
-      { "mesh": "Hat", "nodePath": "/M/Hat", "textures": ["C:/a/T2.tga", "C:/a/T3.tga"] }
+      { "mesh": "Hat", "nodePath": "/M/Hat", "textures": ["C:/a/T2.tga", "C:/a/T3.tga"], "mergeSubmeshes": true }
     ] }
   ]
 })";
@@ -419,6 +419,8 @@ void TestManifestRoundTrip()
                 CHECK(req.items[0].meshes[1].textures[0] == "C:/a/T2.tga");
                 CHECK(req.items[0].meshes[1].textures[1] == "C:/a/T3.tga");
             }
+            CHECK(req.items[0].meshes[1].mergeSubmeshes);
+            CHECK(!req.items[0].meshes[0].mergeSubmeshes); // omitted -> default false
         }
     }
     fs::remove(reqPath);

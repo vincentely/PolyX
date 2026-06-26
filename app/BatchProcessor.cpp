@@ -131,6 +131,33 @@ int MaterialIndexOfPolygon(const fbxsdk::FbxMesh* mesh, int poly)
     return 0;
 }
 
+// Collapse a mesh's submeshes into one material slot: all polygons -> material 0,
+// node keeps only its first material. Safe for skinned meshes (only the material
+// assignment changes, not control points / UVs / skin). Use after UV remapping.
+void CollapseMeshToSingleMaterial(fbxsdk::FbxMesh* mesh)
+{
+    if (mesh == nullptr) return;
+    fbxsdk::FbxNode* node = mesh->GetNode();
+    if (node == nullptr) return;
+
+    fbxsdk::FbxSurfaceMaterial* keep = node->GetMaterialCount() > 0 ? node->GetMaterial(0) : nullptr;
+    node->RemoveAllMaterials();
+    if (keep != nullptr)
+    {
+        node->AddMaterial(keep);
+    }
+
+    fbxsdk::FbxGeometryElementMaterial* materialElement = mesh->GetElementMaterial(0);
+    if (materialElement != nullptr)
+    {
+        materialElement->SetMappingMode(fbxsdk::FbxLayerElement::eAllSame);
+        materialElement->SetReferenceMode(fbxsdk::FbxLayerElement::eIndexToDirect);
+        fbxsdk::FbxLayerElementArrayTemplate<int>& indices = materialElement->GetIndexArray();
+        indices.Clear();
+        indices.Add(0);
+    }
+}
+
 } // namespace
 
 BatchProcessor::BatchProcessor(const core::AppConfig& config, core::Logger& logger)
@@ -336,6 +363,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         // and load that entry's per-material-slot textures. meshMaterialTextures
         // is aligned to scene-mesh order; [k][m] = mesh k, material slot m.
         std::vector<std::vector<atlas::Image>> meshMaterialTextures(sceneMeshes.size());
+        std::vector<bool> meshMerge(sceneMeshes.size(), false);
         std::vector<int> entryMatchedMesh(item.meshes.size(), -1); // scene mesh index, or -1
         std::vector<bool> entryAnyLoaded(item.meshes.size(), false);
         std::vector<bool> entryAnyFailed(item.meshes.size(), false);
@@ -376,6 +404,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
             }
 
             entryMatchedMesh[matchJ] = static_cast<int>(k);
+            meshMerge[k] = item.meshes[matchJ].mergeSubmeshes;
             const std::vector<std::string>& slotTextures = item.meshes[matchJ].textures;
             meshMaterialTextures[k].resize(slotTextures.size());
             for (std::size_t s = 0; s < slotTextures.size(); ++s)
@@ -423,6 +452,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         filePlan.inputFbx = absFbx;
         filePlan.outputFbx = outputFbx;
         filePlan.meshMaterialTextures = std::move(meshMaterialTextures);
+        filePlan.meshMerge = std::move(meshMerge);
         filePlan.scenePlan = std::move(scenePlan);
         filePlan.originalLoader = std::move(loaderPtr);
         filePlans.push_back(std::move(filePlan));
@@ -708,6 +738,7 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
     const int atlasH = atlasBuilder.GetAtlasImage().height;
 
     std::vector<fbxsdk::FbxMesh*> atlasedMeshes;
+    std::vector<fbxsdk::FbxMesh*> meshesToMerge;
 
     const auto remapUvRegion = [&](double srcU, double srcV,
                                     const uv::RegionMapping& rm,
@@ -749,6 +780,10 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
             continue; // mesh not atlased -> leave its UVs unchanged
         }
         atlasedMeshes.push_back(mesh);
+        if (meshIndex < filePlan.meshMerge.size() && filePlan.meshMerge[meshIndex])
+        {
+            meshesToMerge.push_back(mesh);
+        }
 
         for (int uvSetIndex = 0; uvSetIndex < origMesh->GetElementUVCount(); ++uvSetIndex)
         {
@@ -812,6 +847,10 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
     }
     std::filesystem::path atlasRelativePath = RelativeTo(atlasOutputPath, filePlan.outputFbx.parent_path());
     ApplySceneMaterials(scene, atlasRelativePath, filePlan.scenePlan.primaryUvSetName, atlasedMeshes);
+    for (fbxsdk::FbxMesh* mergeMesh : meshesToMerge)
+    {
+        CollapseMeshToSingleMaterial(mergeMesh);
+    }
     return true;
 }
 

@@ -12,6 +12,7 @@ struct MeshEntry
     std::string mesh;                   // mesh name (fallback identity)
     std::string nodePath;               // "/Name/Name/..." node path (primary identity)
     std::vector<std::string> textures;  // one per material slot / submesh (in slot order)
+    bool mergeSubmeshes = false;        // collapse all submeshes to one material (same shader)
 };
 
 struct RequestItem

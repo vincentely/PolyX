@@ -23,6 +23,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
       "fbx": "Pet_06B.fbx",
       "meshes": [
         { "mesh": "Pet_06B", "nodePath": "/Pet_06B",
+          "mergeSubmeshes": true,
           "textures": [
             "../../Texture/T_Pet_01.tga",
             "../../Texture/T_Pet_02.tga"
@@ -44,6 +45,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | `…meshes[].mesh` | 网格名（匹配兜底） |
 | `…meshes[].nodePath` | `/名/名/…` 节点路径（主匹配键） |
 | `…meshes[].textures[]` | **按材质槽顺序**的贴图路径数组（每个 submesh 一张），相对本 JSON 目录。兼容旧的单数 `texture`（视作 1 个元素） |
+| `…meshes[].mergeSubmeshes` | 布尔，可省（默认 false）。导出工具在「所有材质槽**同 shader 且都有贴图**」时置 true → PolyX 重映射后把该网格塌缩成 **1 材质 / 1 submesh**（减 draw call；对蒙皮安全，只改材质分配）。不同 shader / 有无贴图槽 → false，保留多 submesh |
 
 > C++ 按 `nodePath`（兜底 `mesh` 名）在 FBX 内**逐网格**匹配，各自用自己的贴图重映射 UV、合进同一张共享图集。
 > 不区分 palette/full：manifest 里有什么就合，要不要收进来由人在 Unity 里决定（选哪些导出）。

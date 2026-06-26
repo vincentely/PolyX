@@ -126,11 +126,24 @@ namespace PolyX.EditorTools
                             continue;
                         }
 
+                        // Merge submeshes only when every slot is textured AND all slots share
+                        // one shader (so they can collapse to a single atlas material).
+                        bool allTextured = texPaths.TrueForAll(t => !string.IsNullOrEmpty(t));
+                        bool sameShader = true;
+                        Shader shader0 = null;
+                        foreach (var mat in mats)
+                        {
+                            if (mat == null) { sameShader = false; break; }
+                            if (shader0 == null) shader0 = mat.shader;
+                            else if (mat.shader != shader0) { sameShader = false; break; }
+                        }
+
                         fbxEntry.meshes.Add(new MMesh
                         {
                             mesh = mesh.name,
                             nodePath = NodePath(r.transform, root.transform),
                             textures = texPaths,
+                            mergeSubmeshes = mats.Length > 1 && allTextured && sameShader,
                         });
                     }
 
@@ -228,6 +241,7 @@ namespace PolyX.EditorTools
             public string mesh;
             public string nodePath;
             public List<string> textures = new List<string>();
+            public bool mergeSubmeshes;
         }
 
         [Serializable]

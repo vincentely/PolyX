@@ -44,6 +44,7 @@ private:
         std::filesystem::path outputFbx;
         // Per-mesh (scene order) -> per material slot (submesh) source textures.
         std::vector<std::vector<atlas::Image>> meshMaterialTextures;
+        std::vector<bool> meshMerge; // per mesh (scene order): collapse submeshes to one material
         uv::ScenePlan scenePlan;
         // Scene loaded during analysis, kept alive (pristine) to reuse as the
         // export-time reference instead of re-loading the input file.

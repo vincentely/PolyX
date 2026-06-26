@@ -107,6 +107,11 @@ bool ReadRequest(const std::filesystem::path& file, Request& out, std::string* e
                             meshEntry.textures.push_back(single);
                         }
                     }
+                    if (const auto mergeIt = meshNode.find("mergeSubmeshes");
+                        mergeIt != meshNode.end() && mergeIt->is_boolean())
+                    {
+                        meshEntry.mergeSubmeshes = mergeIt->get<bool>();
+                    }
                     item.meshes.push_back(std::move(meshEntry));
                 }
             }
