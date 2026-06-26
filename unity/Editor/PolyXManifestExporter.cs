@@ -23,6 +23,7 @@ namespace PolyX.EditorTools
         private const string ManifestName = "polyx_manifest.json";
 
         [SerializeField] private string _folder = DefaultFolder;
+        [SerializeField] private string _excludeFolders = "";
 
         [MenuItem("Tools/PolyX/Manifest Exporter")]
         public static void Open()
@@ -51,6 +52,9 @@ namespace PolyX.EditorTools
                     }
                 }
             }
+            EditorGUILayout.LabelField("Exclude folders (name or sub-path; one per line or comma-separated):",
+                EditorStyles.wordWrappedLabel);
+            _excludeFolders = EditorGUILayout.TextArea(_excludeFolders, GUILayout.Height(48));
             EditorGUILayout.Space();
 
             using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(_folder)))
@@ -71,10 +75,17 @@ namespace PolyX.EditorTools
                 return;
             }
 
+            var excludes = (_excludeFolders ?? string.Empty)
+                .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim().Replace('\\', '/').Trim('/'))
+                .Where(s => s.Length > 0)
+                .ToList();
+
             string[] fbxGuids = AssetDatabase.FindAssets("t:Model", new[] { folder });
             var items = new List<MFbx>();
             var warnings = new List<string>();
             int fbxCount = 0;
+            int excludedCount = 0;
 
             try
             {
@@ -82,6 +93,7 @@ namespace PolyX.EditorTools
                 {
                     string fbxPath = AssetDatabase.GUIDToAssetPath(fbxGuids[i]);
                     if (!fbxPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (IsExcluded(fbxPath, excludes)) { excludedCount++; continue; }
                     fbxCount++;
                     EditorUtility.DisplayProgressBar("PolyX", fbxPath, (float)i / Mathf.Max(1, fbxGuids.Length));
 
@@ -169,12 +181,12 @@ namespace PolyX.EditorTools
 
             int meshCount = items.Sum(e => e.meshes.Count);
             foreach (string w in warnings) Debug.LogWarning("[PolyX] " + w);
-            Debug.Log("[PolyX] Exported " + meshCount + " meshes across " + items.Count + " FBX -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
+            Debug.Log("[PolyX] Exported " + meshCount + " meshes across " + items.Count + " FBX (excluded " + excludedCount + ") -> " + outAssetPath + " (warnings: " + warnings.Count + ")");
 
             var asset = AssetDatabase.LoadAssetAtPath<TextAsset>(outAssetPath);
             if (asset != null) EditorGUIUtility.PingObject(asset);
             EditorUtility.DisplayDialog("PolyX",
-                "Exported " + meshCount + " meshes across " + items.Count + " FBX.\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
+                "Exported " + meshCount + " meshes across " + items.Count + " FBX.\nExcluded: " + excludedCount + " FBX\nWarnings: " + warnings.Count + "\n\n" + outAssetPath,
                 "OK");
         }
 
@@ -197,6 +209,20 @@ namespace PolyX.EditorTools
                 {
                     return true;
                 }
+            }
+            return false;
+        }
+
+        // True if the asset path lies under any excluded folder name / sub-path.
+        private static bool IsExcluded(string assetPath, List<string> excludes)
+        {
+            if (excludes == null || excludes.Count == 0) return false;
+            string p = assetPath.Replace('\\', '/');
+            foreach (var e in excludes)
+            {
+                if (p.IndexOf("/" + e + "/", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (p.StartsWith(e + "/", StringComparison.OrdinalIgnoreCase)) return true;
+                if (p.EndsWith("/" + e, StringComparison.OrdinalIgnoreCase)) return true;
             }
             return false;
         }
