@@ -6,4 +6,9 @@ namespace polyx::core
 // other platforms fall back to a buffered read. Isolated here so callers do not
 // include conio.h / platform headers directly.
 void WaitForAnyKey();
+
+// Switch the attached console to UTF-8 (output + input) so non-ASCII file paths
+// (e.g. CJK directories) render correctly. No-op on non-Windows; safe to call
+// even when no console is attached.
+void EnableUtf8Console();
 } // namespace polyx::core

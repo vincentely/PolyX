@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application>
+    <windowsSettings>
+      <!-- Make the process active code page UTF-8 (Windows 10 1903+). With this,
+           argv, the CRT, and std::filesystem narrow<->wide conversions all use
+           UTF-8, so non-ASCII asset paths (e.g. CJK directories) round-trip. -->
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

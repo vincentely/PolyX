@@ -56,6 +56,8 @@ std::filesystem::path ExeDir(const std::filesystem::path& arg0)
 
 int main(int argc, char* argv[])
 {
+    polyx::core::EnableUtf8Console();
+
     polyx::core::AppConfig config;
     std::string errorMessage;
     const std::filesystem::path executableName = argc > 0 ? argv[0] : "PolyX";

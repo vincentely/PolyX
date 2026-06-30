@@ -70,7 +70,7 @@ bool FbxLoader::Load(const std::filesystem::path& filePath, std::string* errorMe
     }
 
     ImporterPtr importer(fbxsdk::FbxImporter::Create(manager_, ""));
-    const std::string filePathString = filePath.string();
+    const std::string filePathString = filePath.u8string(); // FBX SDK expects UTF-8
     if (!importer || !importer->Initialize(filePathString.c_str(), -1, manager_->GetIOSettings()))
     {
         if (errorMessage != nullptr)
@@ -120,7 +120,7 @@ bool FbxLoader::Save(const std::filesystem::path& filePath, std::string* errorMe
         return false;
     }
 
-    const std::string filePathString = filePath.string();
+    const std::string filePathString = filePath.u8string(); // FBX SDK expects UTF-8
     if (!exporter->Initialize(filePathString.c_str(), -1, manager_->GetIOSettings()))
     {
         if (errorMessage != nullptr)

@@ -137,7 +137,11 @@ add_executable(PolyX
   uv/UVAnalyzer.cpp
   atlas/AtlasBuilder.cpp
   atlas/ImageBackend_Windows.cpp
-  atlas/TgaLoader.cpp)
+  atlas/TgaLoader.cpp
+  # UTF-8 application manifest (Windows): CMake merges any .manifest source into
+  # the embedded manifest via mt.exe, making argv/CRT/std::filesystem use UTF-8
+  # so non-ASCII (e.g. CJK) asset paths round-trip regardless of system codepage.
+  app/PolyX.manifest)
 
 target_include_directories(PolyX PRIVATE "${PROJECT_SOURCE_DIR}" "${PROJECT_SOURCE_DIR}/third_party")
 target_link_libraries(PolyX PRIVATE AutodeskFBXSDK gdiplus)
