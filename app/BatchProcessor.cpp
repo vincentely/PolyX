@@ -54,6 +54,33 @@ std::string ToUtf8(const std::filesystem::path& path)
     return path.u8string();
 }
 
+bool EqualsIgnoreCase(const std::string& value, const char* expected)
+{
+    if (expected == nullptr)
+    {
+        return false;
+    }
+    const std::size_t len = std::strlen(expected);
+    if (value.size() != len)
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < len; ++i)
+    {
+        if (std::tolower(static_cast<unsigned char>(value[i])) !=
+            std::tolower(static_cast<unsigned char>(expected[i])))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsIncrementalMode(const std::string& mode)
+{
+    return EqualsIgnoreCase(mode, "incremental");
+}
+
 void ParseAtlasSize(const std::string& text, bool& autoSize, int& width, int& height)
 {
     autoSize = true;
@@ -291,16 +318,29 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
                                  const std::filesystem::path& outputDir,
                                  manifest::Result& result)
 {
+    const bool incremental = IsIncrementalMode(request.mode);
+
     bool autoSize = true;
     int atlasW = 1024;
     int atlasH = 1024;
-    ParseAtlasSize(request.atlasSize, autoSize, atlasW, atlasH);
+    if (!incremental)
+    {
+        ParseAtlasSize(request.atlasSize, autoSize, atlasW, atlasH);
+    }
 
     std::filesystem::create_directories(outputDir);
     const std::filesystem::path atlasOutputPath = outputDir / "atlas.png";
 
     result = manifest::Result{};
+    result.mode = incremental ? "incremental" : "full";
     result.atlasOut = ToUtf8(atlasOutputPath);
+    if (incremental)
+    {
+        result.targetAtlas = request.targetAtlas;
+        result.targetMaterial = request.targetMaterial;
+        result.startX = request.startX;
+        result.startY = request.startY;
+    }
 
     // One result entry per (fbx, mesh). resultIndex[i][j] -> result.items index.
     std::vector<std::vector<std::size_t>> resultIndex(request.items.size());
@@ -325,6 +365,37 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
     atlas::AtlasBuilder atlasBuilder(atlasW, atlasH);
     atlasBuilder.SetAutoSize(autoSize);
     bool hadFatalError = false;
+
+    if (incremental)
+    {
+        if (request.targetAtlas.empty())
+        {
+            logger_.Error("Incremental mode requires targetAtlas.");
+            return false;
+        }
+
+        const std::filesystem::path absTarget =
+            (jsonDir / std::filesystem::u8path(request.targetAtlas)).lexically_normal();
+        atlas::Image baseAtlas;
+        std::string loadError;
+        if (!atlas::LoadImageFile(absTarget, baseAtlas, &loadError))
+        {
+            logger_.Error("Failed to load targetAtlas: " + absTarget.string() + " | " + loadError);
+            return false;
+        }
+
+        std::string baseError;
+        if (!atlasBuilder.LoadBase(baseAtlas, request.startX, request.startY, &baseError))
+        {
+            logger_.Error("Failed to seed incremental atlas: " + baseError);
+            return false;
+        }
+
+        logger_.Info("Incremental base atlas: " + absTarget.string() + " (" +
+                     std::to_string(baseAtlas.width) + "x" + std::to_string(baseAtlas.height) +
+                     ") start=(" + std::to_string(request.startX) + "," +
+                     std::to_string(request.startY) + ")");
+    }
 
     std::unordered_map<std::string, atlas::Image> textureCache;
     const auto loadTexture = [&](const std::filesystem::path& absTexture) -> const atlas::Image*
@@ -470,6 +541,20 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         for (const uv::TileCandidate& tile : scenePlan.uniqueTiles)
         {
             std::string tileError;
+            if (incremental)
+            {
+                atlas::Rect existingRect;
+                if (atlasBuilder.FindTileInAtlas(tile.image, existingRect))
+                {
+                    if (!atlasBuilder.RegisterReusedTile(tile.key, existingRect, tile.sourceRect, &tileError))
+                    {
+                        logger_.Error("Failed to reuse atlas tile from " + absFbx.string() + " | " + tileError);
+                        hadFatalError = true;
+                    }
+                    continue;
+                }
+            }
+
             if (!atlasBuilder.AddTile(tile.key, tile.image, tile.sourceRect, &tileError))
             {
                 logger_.Error("Failed to add atlas tile from " + absFbx.string() + " | " + tileError);
@@ -483,6 +568,7 @@ bool BatchProcessor::RunManifest(const manifest::Request& request,
         filePlan.outputFbx = outputFbx;
         filePlan.meshMaterialTextures = std::move(meshMaterialTextures);
         filePlan.meshMerge = std::move(meshMerge);
+        filePlan.targetMaterialName = request.targetMaterial;
         filePlan.scenePlan = std::move(scenePlan);
         filePlan.originalLoader = std::move(loaderPtr);
         filePlans.push_back(std::move(filePlan));
@@ -815,7 +901,11 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
             meshesToMerge.push_back(mesh);
         }
 
-        for (int uvSetIndex = 0; uvSetIndex < origMesh->GetElementUVCount(); ++uvSetIndex)
+        // Region analysis is based on UV set 0. Remap only that set; rewriting
+        // secondary UVs with mappings derived from set 0 corrupts lightmap/extra UVs.
+        for (int uvSetIndex = 0;
+             uvSetIndex < origMesh->GetElementUVCount() && uvSetIndex < 1;
+             ++uvSetIndex)
         {
             const fbxsdk::FbxGeometryElementUV* origUvElement = origMesh->GetElementUV(uvSetIndex);
             fbxsdk::FbxGeometryElementUV* uvElement = mesh->GetElementUV(uvSetIndex);
@@ -876,7 +966,11 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
         }
     }
     std::filesystem::path atlasRelativePath = RelativeTo(atlasOutputPath, filePlan.outputFbx.parent_path());
-    ApplySceneMaterials(scene, atlasRelativePath, filePlan.scenePlan.primaryUvSetName, atlasedMeshes);
+    ApplySceneMaterials(scene,
+                        atlasRelativePath,
+                        filePlan.scenePlan.primaryUvSetName,
+                        filePlan.targetMaterialName,
+                        atlasedMeshes);
     for (fbxsdk::FbxMesh* mergeMesh : meshesToMerge)
     {
         CollapseMeshToSingleMaterial(mergeMesh);
@@ -887,6 +981,7 @@ bool BatchProcessor::ApplyScenePlan(fbxsdk::FbxScene* scene,
 void BatchProcessor::ApplySceneMaterials(fbxsdk::FbxScene* scene,
                                         const std::filesystem::path& atlasRelativePath,
                                         const std::string& uvSetName,
+                                        const std::string& targetMaterialName,
                                         const std::vector<fbxsdk::FbxMesh*>& atlasedMeshes)
 {
     if (scene == nullptr || atlasedMeshes.empty())
@@ -922,6 +1017,10 @@ void BatchProcessor::ApplySceneMaterials(fbxsdk::FbxScene* scene,
             if (material == nullptr)
             {
                 continue;
+            }
+            if (!targetMaterialName.empty())
+            {
+                material->SetName(targetMaterialName.c_str());
             }
 
             fbxsdk::FbxProperty diffuse = material->FindProperty(fbxsdk::FbxSurfaceMaterial::sDiffuse);

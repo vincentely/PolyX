@@ -24,7 +24,12 @@ struct RequestItem
 struct Request
 {
     int version = 1;
-    std::string atlasSize = "auto"; // "auto" | "1024" | "1024x512"
+    std::string mode = "full";          // "full" | "incremental"
+    std::string atlasSize = "auto";     // full only: "auto" | "1024" | "1024x512"
+    std::string targetAtlas;            // incremental: path to existing atlas (relative to JSON)
+    std::string targetMaterial;         // incremental: Unity target material name
+    int startX = 0;                     // incremental: row-major append point X
+    int startY = 0;                     // incremental: row-major append point Y
     std::string assetsRoot;
     std::string outputRoot;
     std::string atlasOut;
@@ -45,7 +50,12 @@ struct ResultItem
 
 struct Result
 {
+    std::string mode;
     std::string atlasOut;
+    std::string targetAtlas;
+    std::string targetMaterial;
+    int startX = 0;
+    int startY = 0;
     int atlasWidth = 0;
     int atlasHeight = 0;
     std::vector<ResultItem> items;

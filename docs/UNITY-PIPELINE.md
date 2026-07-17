@@ -39,7 +39,11 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | 字段 | 说明 |
 |------|------|
 | `version` | 契约版本，当前 `1` |
-| `atlasSize` | `"auto"` \| `"1024"` \| `"1024x512"` |
+| `mode` | `"full"`（默认）\| `"incremental"` |
+| `atlasSize` | **仅 full**：`"auto"` \| `"1024"` \| `"1024x512"`。incremental **忽略**，尺寸取自 `targetAtlas` |
+| `targetAtlas` | **仅 incremental**：目标图集路径，相对本 JSON 目录 |
+| `targetMaterial` | **仅 incremental，可省**：Unity 目标材质名；提供时输出 FBX 的材质改为此名称，省略时保持原材质名 |
+| `startX` / `startY` | **仅 incremental**：8×8 追加点（像素；Y 向下）。Unity 从右下向左上找最后一个占用块，再取正向行序的下一块 |
 | `items[].fbx` | 源 FBX 路径，**相对于本 JSON 所在目录** |
 | `items[].meshes[]` | 该 FBX 下的一个或多个网格 |
 | `…meshes[].mesh` | 网格名（匹配兜底） |
@@ -47,8 +51,22 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | `…meshes[].textures[]` | **按材质槽顺序**的贴图路径数组（每个 submesh 一张），相对本 JSON 目录。兼容旧的单数 `texture`（视作 1 个元素） |
 | `…meshes[].mergeSubmeshes` | 布尔，可省（默认 false）。导出工具在「所有材质槽**同 shader 且都有贴图**」时置 true → PolyX 重映射后把该网格塌缩成 **1 材质 / 1 submesh**（减 draw call；对蒙皮安全，只改材质分配）。不同 shader / 有无贴图槽 → false，保留多 submesh |
 
+增量示例（`polyx_incremental.json`）：
+
+```json
+{
+  "version": 1,
+  "mode": "incremental",
+  "targetAtlas": "../Atlas/atlas.png",
+  "targetMaterial": "Mat_Scene_Landlord",
+  "startX": 128,
+  "startY": 64,
+  "items": [ { "fbx": "NewPet.fbx", "meshes": [ ... ] } ]
+}
+```
+
 > C++ 按 `nodePath`（兜底 `mesh` 名）在 FBX 内**逐网格**匹配，各自用自己的贴图重映射 UV、合进同一张共享图集。
-> 不区分 palette/full：manifest 里有什么就合，要不要收进来由人在 Unity 里决定（选哪些导出）。
+> full：manifest 里有什么就合。incremental：只处理本次 `items`，在目标图空位追加；装不下则失败、不写产物。
 
 **路径与输出约定**：所有路径相对于 request.json 所在目录。C++ 端 `PolyX <request.json>` 在 **可执行文件所在目录下创建 `output_<json 所在目录名>/`**（如 `.../Mesh/Pet` → `output_Pet`），写出 `atlas.png` + 与 manifest 相对布局镜像的所有 FBX + `result.json`。
 
@@ -56,7 +74,11 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 
 ```json
 {
+  "mode":        "incremental",
   "atlasOut":    "C:/proj/PolyXOut/Atlas/atlas.png",
+  "targetAtlas": "../Atlas/atlas.png",
+  "startX":      128,
+  "startY":      64,
   "atlasWidth":  1024,
   "atlasHeight": 1024,
   "items": [
@@ -68,7 +90,7 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 }
 ```
 
-`status ∈ { ok, warn, error }`，细节进 `detail`（如 `submesh:2`、`mesh-not-found`、`fbx-load`、`texture-load`）。
+`status ∈ { ok, warn, error }`，细节进 `detail`（如 `submesh:2`、`mesh-not-found`、`fbx-load`、`texture-load`）。incremental 时回写 `mode` / `targetAtlas` / `startX` / `startY`。
 
 ---
 
@@ -80,7 +102,9 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 | **粒度到 mesh；submesh 警告** | 检到网格多材质组 → `warn/submesh:N`，仍按给定贴图整体重映射 |
 | **简化、两端易解析** | JSON + JsonUtility（Unity）/ nlohmann（C++） |
 | **镜像目录，便于覆盖回工程** | `outputFbx = <exe>/output_<目录名> / (fbx 相对 manifest 的路径)` |
-| **处理所有条目** | 不区分 palette/full；manifest 里有什么就合进同一张图集 |
+| **处理所有条目** | full：manifest 里有什么就合进同一张图集 |
+| **增量追加** | `mode=incremental` + `targetAtlas` + 8×8 追加点 `startX/startY`；只导出本次 items；尾部空间不够则失败 |
+| **追加点** | 图集正向按左→右、上→下合并；检测时反向按下→上、右→左找最后占用块，取其正向下一块；不填前面的黑洞 |
 
 ## 三个必须注意的坑
 
@@ -95,5 +119,6 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 - **Phase A（已完成）**：JSON 读写层 [`app/Manifest.h`](../app/Manifest.h) / `app/Manifest.cpp`（结构体 + `ReadRequest` / `WriteResult`），单元测试覆盖。`json.hpp` 已 vendored 并接入 CMake。现有目录模式不受影响。
 - **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 逐 FBX 加载 → **按 nodePath/名 把场景网格匹配到 manifest 条目、各用自己的贴图分析**（`UVAnalyzer::AnalyzeScene` 现接收 per-mesh 贴图数组）→ 单张共享图集 → 逐网格重映射 UV、只对已合图的网格重指材质 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`，输出到 `<exe目录>/output/`。验证：PetScene 33 FBX → 2048×2048，33 ok，0 mismatch；折叠（folder）模式与单测仍绿。
   - **多材质 / submesh 已支持**：按多边形材质索引分别用 `textures[m]` 分析、各自重映射、合进同一图集；缺贴图的槽保持原样。匹配不到的网格保持原样（不改 UV、不重指材质）。
-- **Phase A（Unity 侧）**：[unity/Editor/PolyXManifestExporter.cs](../unity/Editor/PolyXManifestExporter.cs)（菜单 Tools › PolyX › Manifest Exporter）扫描 FBX 目录、解析主贴图、导出相对路径 request.json。
+- **Phase A（Unity 侧）**：工程内 `Assets/Game/Script/Editor/PolyXManifestExporter.cs`（菜单 Tools › PolyX › Manifest Exporter）。全量：扫描 FBX 目录 → `polyx_manifest.json`。增量：面板下方 **Atlas Texture** + 可选 **Atlas Material** + **Include Materials** → **Scan & Build JSON** → 从材质反查 FBX、反向扫描算 8×8 追加点、写 `polyx_incremental.json`。未选 Atlas Material 时不改输出 FBX 的材质名。
+- **增量（C++）**：`RunManifest` 支持 `mode=incremental`；加载目标图、校验起点、内容匹配复用或空位装箱；失败不写产物。
 - **回写（手动）**：把 `output_<目录名>/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。

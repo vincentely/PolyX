@@ -62,7 +62,18 @@ bool ReadRequest(const std::filesystem::path& file, Request& out, std::string* e
     {
         out.version = it->get<int>();
     }
+    out.mode = GetString(root, "mode", "full");
     out.atlasSize = GetString(root, "atlasSize", "auto");
+    out.targetAtlas = GetString(root, "targetAtlas");
+    out.targetMaterial = GetString(root, "targetMaterial");
+    if (const auto it = root.find("startX"); it != root.end() && it->is_number_integer())
+    {
+        out.startX = it->get<int>();
+    }
+    if (const auto it = root.find("startY"); it != root.end() && it->is_number_integer())
+    {
+        out.startY = it->get<int>();
+    }
     out.assetsRoot = GetString(root, "assetsRoot");
     out.outputRoot = GetString(root, "outputRoot");
     out.atlasOut = GetString(root, "atlasOut");
@@ -127,7 +138,18 @@ bool WriteResult(const std::filesystem::path& file, const Result& result, std::s
     try
     {
         json root = json::object();
+        if (!result.mode.empty())
+        {
+            root["mode"] = result.mode;
+        }
         root["atlasOut"] = result.atlasOut;
+        if (!result.targetAtlas.empty())
+        {
+            root["targetAtlas"] = result.targetAtlas;
+            root["targetMaterial"] = result.targetMaterial;
+            root["startX"] = result.startX;
+            root["startY"] = result.startY;
+        }
         root["atlasWidth"] = result.atlasWidth;
         root["atlasHeight"] = result.atlasHeight;
 

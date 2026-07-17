@@ -45,6 +45,7 @@ private:
         // Per-mesh (scene order) -> per material slot (submesh) source textures.
         std::vector<std::vector<atlas::Image>> meshMaterialTextures;
         std::vector<bool> meshMerge; // per mesh (scene order): collapse submeshes to one material
+        std::string targetMaterialName; // incremental: rename embedded material for Unity remapping
         uv::ScenePlan scenePlan;
         // Scene loaded during analysis, kept alive (pristine) to reuse as the
         // export-time reference instead of re-loading the input file.
@@ -75,6 +76,7 @@ private:
     void ApplySceneMaterials(fbxsdk::FbxScene* scene,
                              const std::filesystem::path& atlasRelativePath,
                              const std::string& uvSetName,
+                             const std::string& targetMaterialName,
                              const std::vector<fbxsdk::FbxMesh*>& atlasedMeshes);
 
     void CollectMeshes(fbxsdk::FbxNode* node, std::vector<fbxsdk::FbxMesh*>& meshes) const;

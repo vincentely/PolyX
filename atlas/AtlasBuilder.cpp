@@ -124,6 +124,70 @@ void Blit(Image& destination, const Image& source, int destinationX, int destina
     }
 }
 
+bool IsBlockEmpty(const Image& image, int blockX, int blockY, int blockSize)
+{
+    if (image.Empty() || blockSize <= 0 || blockX < 0 || blockY < 0 ||
+        blockX >= image.width || blockY >= image.height)
+    {
+        return false;
+    }
+
+    const int x1 = std::min(blockX + blockSize, image.width);
+    const int y1 = std::min(blockY + blockSize, image.height);
+    const std::size_t rowBytes = static_cast<std::size_t>(image.width) * 4U;
+    for (int y = blockY; y < y1; ++y)
+    {
+        const std::uint8_t* row = image.pixels.data() + static_cast<std::size_t>(y) * rowBytes + static_cast<std::size_t>(blockX) * 4U;
+        for (int x = blockX; x < x1; ++x)
+        {
+            const std::size_t i = static_cast<std::size_t>(x - blockX) * 4U;
+            if (row[i + 0U] != 0 || row[i + 1U] != 0 || row[i + 2U] != 0)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool FindAppendStart(const Image& image, int blockSize, int& outX, int& outY)
+{
+    outX = 0;
+    outY = 0;
+    if (image.Empty() || blockSize <= 0 ||
+        image.width % blockSize != 0 || image.height % blockSize != 0)
+    {
+        return false;
+    }
+
+    // Reverse of the packer's forward row order. The first occupied block found
+    // is the last used block; append at its forward successor.
+    for (int y = image.height - blockSize; y >= 0; y -= blockSize)
+    {
+        for (int x = image.width - blockSize; x >= 0; x -= blockSize)
+        {
+            if (!IsBlockEmpty(image, x, y, blockSize))
+            {
+                outX = x + blockSize;
+                outY = y;
+                if (outX >= image.width)
+                {
+                    outX = 0;
+                    outY += blockSize;
+                }
+                if (outY >= image.height)
+                {
+                    return false;
+                }
+                return true;
+            }
+        }
+    }
+
+    // No occupied block: append from the atlas origin.
+    return true;
+}
+
 AtlasBuilder::AtlasBuilder(int targetWidth, int targetHeight)
     : targetWidth_(targetWidth)
     , targetHeight_(targetHeight)
@@ -424,8 +488,348 @@ bool AtlasBuilder::PackTiles(const std::vector<std::size_t>& order,
     return true;
 }
 
+bool AtlasBuilder::RegionIsEmpty(int x, int y, int width, int height) const
+{
+    const int block = core::kTextureBlockSize;
+    if (atlasImage_.Empty() || occupancy_.empty() || x < 0 || y < 0 ||
+        width <= 0 || height <= 0 || x % block != 0 || y % block != 0 ||
+        x + width > atlasImage_.width || y + height > atlasImage_.height)
+    {
+        return false;
+    }
+
+    const int firstColumn = x / block;
+    const int firstRow = y / block;
+    const int lastColumn = (x + width + block - 1) / block;
+    const int lastRow = (y + height + block - 1) / block;
+    for (int row = firstRow; row < lastRow; ++row)
+    {
+        for (int column = firstColumn; column < lastColumn; ++column)
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(occupancyColumns_) +
+                static_cast<std::size_t>(column);
+            if (occupancy_[index] != 0)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void AtlasBuilder::ReserveRegion(int x, int y, int width, int height)
+{
+    const int block = core::kTextureBlockSize;
+    const int firstColumn = x / block;
+    const int firstRow = y / block;
+    const int lastColumn = (x + width + block - 1) / block;
+    const int lastRow = (y + height + block - 1) / block;
+    for (int row = firstRow; row < lastRow; ++row)
+    {
+        for (int column = firstColumn; column < lastColumn; ++column)
+        {
+            const std::size_t index =
+                static_cast<std::size_t>(row) * static_cast<std::size_t>(occupancyColumns_) +
+                static_cast<std::size_t>(column);
+            occupancy_[index] = 1;
+        }
+    }
+}
+
+bool AtlasBuilder::PlaceInEmptySpace(int width, int height, int& outX, int& outY) const
+{
+    const int block = core::kTextureBlockSize;
+    if (width <= 0 || height <= 0 || atlasImage_.Empty())
+    {
+        return false;
+    }
+
+    // Scan only forward from the append point. Earlier black blocks may be
+    // intentional black content or packing gaps, so incremental mode must not
+    // go back and fill them.
+    const auto tryFrom = [&](int originX, int originY) -> bool
+    {
+        for (int y = originY; y + height <= atlasImage_.height; y += block)
+        {
+            const int x0 = (y == originY) ? originX : 0;
+            for (int x = x0; x + width <= atlasImage_.width; x += block)
+            {
+                if (RegionIsEmpty(x, y, width, height))
+                {
+                    outX = x;
+                    outY = y;
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    if (tryFrom(startX_, startY_))
+    {
+        return true;
+    }
+    return false;
+}
+
+bool AtlasBuilder::LoadBase(const Image& atlas, int startX, int startY, std::string* errorMessage)
+{
+    if (atlas.Empty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Base atlas image is empty.";
+        }
+        return false;
+    }
+
+    const int block = core::kTextureBlockSize;
+    if (atlas.width % block != 0 || atlas.height % block != 0)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Base atlas dimensions must be divisible by the texture block size.";
+        }
+        return false;
+    }
+
+    if (startX < 0 || startY < 0 || startX % block != 0 || startY % block != 0 ||
+        startX + block > atlas.width || startY + block > atlas.height)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Incremental startX/startY must be non-negative, "
+                            "block-aligned, and inside the atlas.";
+        }
+        return false;
+    }
+
+    if (!IsBlockEmpty(atlas, startX, startY, block))
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Incremental start cell is not empty.";
+        }
+        return false;
+    }
+
+    int appendX = 0;
+    int appendY = 0;
+    if (!FindAppendStart(atlas, block, appendX, appendY))
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Base atlas has no append space after its last occupied 8x8 block.";
+        }
+        return false;
+    }
+    if (appendX != startX || appendY != startY)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Incremental startX/startY is not the row-major append point "
+                            "(expected " +
+                            std::to_string(appendX) + "," + std::to_string(appendY) + ").";
+        }
+        return false;
+    }
+
+    tiles_.clear();
+    tileIndexByKey_.clear();
+    entries_.clear();
+    entryIndexByKey_.clear();
+
+    atlasImage_ = atlas;
+    targetWidth_ = atlas.width;
+    targetHeight_ = atlas.height;
+    autoSize_ = false;
+    incremental_ = true;
+    startX_ = startX;
+    startY_ = startY;
+    occupancyColumns_ = atlas.width / block;
+    occupancyRows_ = atlas.height / block;
+    occupancy_.assign(
+        static_cast<std::size_t>(occupancyColumns_) * static_cast<std::size_t>(occupancyRows_), 0);
+    for (int row = 0; row < occupancyRows_; ++row)
+    {
+        for (int column = 0; column < occupancyColumns_; ++column)
+        {
+            if (!IsBlockEmpty(atlas, column * block, row * block, block))
+            {
+                occupancy_[static_cast<std::size_t>(row) * static_cast<std::size_t>(occupancyColumns_) +
+                           static_cast<std::size_t>(column)] = 1;
+            }
+        }
+    }
+    built_ = false;
+    return true;
+}
+
+bool AtlasBuilder::FindTileInAtlas(const Image& tile, Rect& outAtlasRect) const
+{
+    outAtlasRect = Rect{};
+    if (tile.Empty() || atlasImage_.Empty())
+    {
+        return false;
+    }
+    if (tile.width > atlasImage_.width || tile.height > atlasImage_.height)
+    {
+        return false;
+    }
+
+    const int block = core::kTextureBlockSize;
+    const std::size_t atlasRow = static_cast<std::size_t>(atlasImage_.width) * 4U;
+    const std::size_t tileRow = static_cast<std::size_t>(tile.width) * 4U;
+
+    for (int y = 0; y + tile.height <= atlasImage_.height; y += block)
+    {
+        for (int x = 0; x + tile.width <= atlasImage_.width; x += block)
+        {
+            // An empty black region can have the same pixels as a solid-black
+            // tile; only reuse content from a region classified as occupied.
+            if (RegionIsEmpty(x, y, tile.width, tile.height))
+            {
+                continue;
+            }
+
+            bool match = true;
+            for (int row = 0; row < tile.height && match; ++row)
+            {
+                const std::uint8_t* a = atlasImage_.pixels.data() +
+                    static_cast<std::size_t>(y + row) * atlasRow + static_cast<std::size_t>(x) * 4U;
+                const std::uint8_t* t = tile.pixels.data() + static_cast<std::size_t>(row) * tileRow;
+                if (std::memcmp(a, t, tileRow) != 0)
+                {
+                    match = false;
+                }
+            }
+            if (match)
+            {
+                outAtlasRect = Rect{ x, y, tile.width, tile.height };
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool AtlasBuilder::RegisterReusedTile(const std::string& key, const Rect& atlasRect, const Rect& sourceRect, std::string* errorMessage)
+{
+    if (key.empty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "Tile key is empty.";
+        }
+        return false;
+    }
+
+    if (const auto it = entryIndexByKey_.find(key); it != entryIndexByKey_.end())
+    {
+        const AtlasEntry& existing = entries_[it->second];
+        if (existing.atlasRect.x != atlasRect.x || existing.atlasRect.y != atlasRect.y ||
+            existing.atlasRect.width != atlasRect.width || existing.atlasRect.height != atlasRect.height)
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Reused tile key maps to conflicting atlas rect: " + key;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    AtlasEntry entry;
+    entry.key = key;
+    entry.sourceRect = sourceRect;
+    entry.atlasRect = atlasRect;
+    entryIndexByKey_.emplace(key, entries_.size());
+    entries_.push_back(std::move(entry));
+    return true;
+}
+
+bool AtlasBuilder::BuildIncremental(std::string* errorMessage)
+{
+    if (!incremental_)
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "BuildIncremental requires LoadBase first.";
+        }
+        return false;
+    }
+
+    if (entries_.empty() && tiles_.empty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = "No tiles to place in incremental atlas build.";
+        }
+        return false;
+    }
+
+    std::vector<std::size_t> order(tiles_.size());
+    for (std::size_t i = 0; i < order.size(); ++i)
+    {
+        order[i] = i;
+    }
+    std::sort(order.begin(), order.end(), [&](std::size_t lhs, std::size_t rhs)
+    {
+        const PendingTile& a = tiles_[lhs];
+        const PendingTile& b = tiles_[rhs];
+        if (a.image.height != b.image.height)
+        {
+            return a.image.height > b.image.height;
+        }
+        if (a.image.width != b.image.width)
+        {
+            return a.image.width > b.image.width;
+        }
+        return a.key < b.key;
+    });
+
+    for (const std::size_t index : order)
+    {
+        const PendingTile& tile = tiles_[index];
+        if (entryIndexByKey_.find(tile.key) != entryIndexByKey_.end())
+        {
+            continue; // already registered as reused
+        }
+
+        int px = 0;
+        int py = 0;
+        if (!PlaceInEmptySpace(tile.image.width, tile.image.height, px, py))
+        {
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = "Incremental atlas has no free space for tile: " + tile.key;
+            }
+            return false;
+        }
+
+        Blit(atlasImage_, tile.image, px, py);
+        ReserveRegion(px, py, tile.image.width, tile.image.height);
+
+        AtlasEntry entry;
+        entry.key = tile.key;
+        entry.sourceRect = tile.sourceRect;
+        entry.atlasRect = Rect{ px, py, tile.image.width, tile.image.height };
+        entryIndexByKey_.emplace(entry.key, entries_.size());
+        entries_.push_back(std::move(entry));
+    }
+
+    built_ = true;
+    return true;
+}
+
 bool AtlasBuilder::Build(std::string* errorMessage)
 {
+    if (incremental_)
+    {
+        return BuildIncremental(errorMessage);
+    }
+
     entries_.clear();
     entryIndexByKey_.clear();
     atlasImage_ = Image{};

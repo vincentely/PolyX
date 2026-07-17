@@ -4,6 +4,7 @@
 #include "uv/UVRegion.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <unordered_map>
 #include <utility>
@@ -34,13 +35,29 @@ void CollectMeshes(fbxsdk::FbxNode* node, std::vector<fbxsdk::FbxMesh*>& meshes)
 
 std::string BuildTileKey(const atlas::Image& image)
 {
+    // Stable, JSON-safe key: WxH|<fnv1a64-hex> (raw pixels are too large to persist).
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const std::uint8_t byte : image.pixels)
+    {
+        hash ^= static_cast<std::uint64_t>(byte);
+        hash *= 1099511628211ULL;
+    }
+
+    char hex[17];
+    for (int i = 15; i >= 0; --i)
+    {
+        const int nibble = static_cast<int>((hash >> (static_cast<unsigned>(i) * 4U)) & 0xFULL);
+        hex[15 - i] = static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
+    }
+    hex[16] = '\0';
+
     std::string key;
-    key.reserve(32U + image.pixels.size());
+    key.reserve(32U);
     key.append(std::to_string(image.width));
     key.push_back('x');
     key.append(std::to_string(image.height));
     key.push_back('|');
-    key.append(reinterpret_cast<const char*>(image.pixels.data()), static_cast<std::size_t>(image.pixels.size()));
+    key.append(hex);
     return key;
 }
 

@@ -370,6 +370,130 @@ void TestUnionFind()
 
 // --- Manifest JSON I/O -----------------------------------------------------
 
+void TestFindAppendStart()
+{
+    atlas::Image img;
+    img.width = 32;
+    img.height = 32;
+    img.pixels.assign(32U * 32U * 4U, 0);
+    // Empty area is opaque black in real Unity-imported PNGs.
+    for (std::size_t i = 3; i < img.pixels.size(); i += 4U)
+    {
+        img.pixels[i] = 255;
+    }
+
+    // The internal black gap at (8,0) is not the append point. The last
+    // occupied block is (16,0), so append at its forward successor (24,0).
+    for (int y = 0; y < 8; ++y)
+    {
+        for (int x = 0; x < 8; ++x)
+        {
+            const std::size_t i = (static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)) * 4U;
+            img.pixels[i + 0] = 255;
+            img.pixels[i + 3] = 255;
+        }
+        for (int x = 16; x < 24; ++x)
+        {
+            const std::size_t i = (static_cast<std::size_t>(y) * 32U + static_cast<std::size_t>(x)) * 4U;
+            img.pixels[i + 1] = 255;
+            img.pixels[i + 3] = 255;
+        }
+    }
+
+    int sx = -1;
+    int sy = -1;
+    CHECK(atlas::FindAppendStart(img, 8, sx, sy));
+    CHECK(sx == 24);
+    CHECK(sy == 0);
+
+    // Occupying the row's last block wraps append to the next row.
+    atlas::Image right = MakeSolid(8, 8, 1, 1, 1, 255);
+    atlas::Blit(img, right, 24, 0);
+    CHECK(atlas::FindAppendStart(img, 8, sx, sy));
+    CHECK(sx == 0);
+    CHECK(sy == 8);
+}
+
+void TestIncrementalPackPreservesOccupied()
+{
+    atlas::Image base;
+    base.width = 32;
+    base.height = 32;
+    base.pixels.assign(32U * 32U * 4U, 0);
+    atlas::Image occupied = MakeSolid(8, 8, 10, 20, 30, 255);
+    atlas::Blit(base, occupied, 0, 0);
+
+    atlas::AtlasBuilder builder(32, 32);
+    std::string error;
+    CHECK(builder.LoadBase(base, 8, 0, &error));
+
+    atlas::Image newTile = MakeSolid(8, 8, 1, 2, 3, 255);
+    CHECK(builder.AddTile("new", newTile, atlas::Rect{ 0, 0, 8, 8 }, &error));
+    CHECK(builder.BuildIncremental(&error));
+
+    const atlas::AtlasEntry* entry = builder.FindEntry("new");
+    CHECK(entry != nullptr);
+    if (entry != nullptr)
+    {
+        CHECK(entry->atlasRect.x == 8);
+        CHECK(entry->atlasRect.y == 0);
+    }
+
+    // Original occupied pixels unchanged.
+    CHECK(builder.GetAtlasImage().pixels[0] == 10);
+    CHECK(builder.GetAtlasImage().pixels[1] == 20);
+    CHECK(builder.GetAtlasImage().pixels[2] == 30);
+}
+
+void TestIncrementalReservesOpaqueBlackTile()
+{
+    atlas::Image base = MakeSolid(32, 8, 0, 0, 0, 255);
+    atlas::Image occupied = MakeSolid(8, 8, 10, 20, 30, 255);
+    atlas::Blit(base, occupied, 0, 0);
+
+    atlas::AtlasBuilder builder(32, 8);
+    std::string error;
+    CHECK(builder.LoadBase(base, 8, 0, &error));
+
+    atlas::Image black = MakeSolid(8, 8, 0, 0, 0, 255);
+    atlas::Image color = MakeSolid(8, 8, 1, 2, 3, 255);
+    CHECK(builder.AddTile("a-black", black, atlas::Rect{ 0, 0, 8, 8 }, &error));
+    CHECK(builder.AddTile("b-color", color, atlas::Rect{ 0, 0, 8, 8 }, &error));
+    CHECK(builder.BuildIncremental(&error));
+
+    const atlas::AtlasEntry* blackEntry = builder.FindEntry("a-black");
+    const atlas::AtlasEntry* colorEntry = builder.FindEntry("b-color");
+    CHECK(blackEntry != nullptr);
+    CHECK(colorEntry != nullptr);
+    if (blackEntry != nullptr && colorEntry != nullptr)
+    {
+        CHECK(!Overlaps(blackEntry->atlasRect, colorEntry->atlasRect));
+        CHECK(blackEntry->atlasRect.x == 8);
+        CHECK(colorEntry->atlasRect.x == 16);
+    }
+}
+
+void TestIncrementalNoSpaceFails()
+{
+    atlas::Image base;
+    base.width = 8;
+    base.height = 8;
+    base.pixels.assign(8U * 8U * 4U, 0);
+    // Leave one append block in a 16x8 image, then try to place a 16x8 tile.
+    base.width = 16;
+    base.height = 8;
+    base.pixels.assign(16U * 8U * 4U, 0);
+    atlas::Image left = MakeSolid(8, 8, 9, 9, 9, 255);
+    atlas::Blit(base, left, 0, 0);
+
+    atlas::AtlasBuilder builder(16, 8);
+    std::string error;
+    CHECK(builder.LoadBase(base, 8, 0, &error));
+    atlas::Image big = MakeSolid(16, 8, 1, 1, 1, 255);
+    CHECK(builder.AddTile("big", big, atlas::Rect{ 0, 0, 16, 8 }, &error));
+    CHECK(!builder.BuildIncremental(&error));
+}
+
 void TestManifestRoundTrip()
 {
     const fs::path reqPath = fs::temp_directory_path() / "polyx_req.json";
@@ -396,6 +520,7 @@ void TestManifestRoundTrip()
     if (!readOk) std::printf("ReadRequest failed: %s\n", error.c_str());
     CHECK(readOk);
     CHECK(req.version == 1);
+    CHECK(req.mode == "full");
     CHECK(req.atlasSize == "auto");
     CHECK(req.outputRoot == "C:/proj/Out");
     CHECK(req.items.size() == 1U);
@@ -423,6 +548,27 @@ void TestManifestRoundTrip()
             CHECK(!req.items[0].meshes[0].mergeSubmeshes); // omitted -> default false
         }
     }
+    fs::remove(reqPath);
+
+    {
+        std::ofstream out(reqPath, std::ios::binary);
+        out << R"({
+  "version": 1,
+  "mode": "incremental",
+  "targetAtlas": "../Atlas/atlas.png",
+  "targetMaterial": "Mat_Scene_Landlord",
+  "startX": 128,
+  "startY": 64,
+  "items": []
+})";
+    }
+    mf::Request inc;
+    CHECK(mf::ReadRequest(reqPath, inc, &error));
+    CHECK(inc.mode == "incremental");
+    CHECK(inc.targetAtlas == "../Atlas/atlas.png");
+    CHECK(inc.targetMaterial == "Mat_Scene_Landlord");
+    CHECK(inc.startX == 128);
+    CHECK(inc.startY == 64);
     fs::remove(reqPath);
 
     mf::Result res;
@@ -474,6 +620,10 @@ int main()
         TestQuantizeToBlockOrigin();
         TestUnionFind();
         TestManifestRoundTrip();
+        TestFindAppendStart();
+        TestIncrementalPackPreservesOccupied();
+        TestIncrementalReservesOpaqueBlackTile();
+        TestIncrementalNoSpaceFails();
     }
     catch (const std::exception& e)
     {
