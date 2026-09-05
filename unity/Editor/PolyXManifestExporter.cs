@@ -18,10 +18,15 @@ namespace PolyX.EditorTools
 {
     public class PolyXManifestExporter : EditorWindow
     {
-        private const string DefaultFolder = "Assets/Game/3D/Mesh/Pet";
+        internal const string DefaultFolder = "Assets/Game/3D/Mesh/Pet";
         private const string ManifestName = "polyx_manifest.json";
         private const string IncrementalManifestName = "polyx_incremental.json";
         private const int BlockSize = 8;
+        private const string LastProfileKeyPrefix = "PolyX.ManifestExporter.LastProfile.";
+
+        [SerializeField] private PolyXManifestProfile _activeProfile;
+        [SerializeField] private bool _workingCopyDirty;
+        [SerializeField] private Vector2 _scrollPosition;
 
         [SerializeField] private string _folder = DefaultFolder;
         [SerializeField] private string _excludeFolders = "";
@@ -39,23 +44,52 @@ namespace PolyX.EditorTools
         private bool _cachedStartValid;
         private bool _startScanPending;
 
+        private List<PolyXManifestProfile> _profiles = new List<PolyXManifestProfile>();
+        private string[] _profileOptions = { "<New Configuration>" };
+
         [MenuItem("Tools/PolyX/Manifest Exporter")]
         public static void Open()
         {
             GetWindow<PolyXManifestExporter>("PolyX Manifest");
         }
 
+        internal static void Open(PolyXManifestProfile profile)
+        {
+            var window = GetWindow<PolyXManifestExporter>("PolyX Manifest");
+            window.Show();
+            window.Focus();
+            window.TrySwitchProfile(profile);
+        }
+
+        private void OnEnable()
+        {
+            EditorApplication.projectChanged += OnProjectChanged;
+            RefreshProfiles();
+
+            if (_activeProfile == null)
+            {
+                RestoreLastProfile();
+            }
+        }
+
         private void OnDisable()
         {
+            EditorApplication.projectChanged -= OnProjectChanged;
             _startScanPending = false;
         }
 
         private void OnGUI()
         {
+            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
+
+            DrawConfigurationControls();
+            EditorGUILayout.Space(8);
+
             EditorGUILayout.LabelField("Scan an FBX folder and export a PolyX request JSON (relative paths).",
                 EditorStyles.wordWrappedLabel);
             EditorGUILayout.Space();
 
+            EditorGUI.BeginChangeCheck();
             using (new EditorGUILayout.HorizontalScope())
             {
                 _folder = EditorGUILayout.TextField("FBX Folder", _folder);
@@ -79,6 +113,7 @@ namespace PolyX.EditorTools
             so.Update();
             EditorGUILayout.PropertyField(so.FindProperty("_excludeMaterials"), new GUIContent("Exclude Materials"), true);
             so.ApplyModifiedProperties();
+            if (EditorGUI.EndChangeCheck()) _workingCopyDirty = true;
             EditorGUILayout.Space();
 
             using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(_folder)))
@@ -96,14 +131,17 @@ namespace PolyX.EditorTools
                 EditorStyles.wordWrappedLabel);
             EditorGUILayout.Space(4);
 
-            so.Update();
+            Texture2D previousAtlas = _atlasTexture;
             EditorGUI.BeginChangeCheck();
+            so.Update();
             EditorGUILayout.PropertyField(so.FindProperty("_atlasTexture"), new GUIContent("Atlas Texture"), true);
-            bool atlasChanged = EditorGUI.EndChangeCheck();
             EditorGUILayout.PropertyField(so.FindProperty("_atlasMaterial"),
                 new GUIContent("Atlas Material (Optional)"), true);
             EditorGUILayout.PropertyField(so.FindProperty("_includeMaterials"), new GUIContent("Include Materials"), true);
             so.ApplyModifiedProperties();
+            if (EditorGUI.EndChangeCheck()) _workingCopyDirty = true;
+
+            bool atlasChanged = previousAtlas != _atlasTexture;
 
             string currentAtlasPath =
                 _atlasTexture != null ? AssetDatabase.GetAssetPath(_atlasTexture) : string.Empty;
@@ -135,7 +173,288 @@ namespace PolyX.EditorTools
                     ExportIncremental();
                 }
             }
+
+            EditorGUILayout.EndScrollView();
         }
+
+        private void DrawConfigurationControls()
+        {
+            if (_profiles == null || _profileOptions == null) RefreshProfiles();
+
+            EditorGUILayout.LabelField("Configuration", EditorStyles.boldLabel);
+
+            int selectedIndex = 0;
+            if (_activeProfile != null)
+            {
+                int profileIndex = _profiles.IndexOf(_activeProfile);
+                if (profileIndex >= 0) selectedIndex = profileIndex + 1;
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                int nextIndex = EditorGUILayout.Popup("Saved Configuration", selectedIndex, _profileOptions);
+                if (nextIndex != selectedIndex)
+                {
+                    if (nextIndex == 0) StartNewWorkingCopy();
+                    else TrySwitchProfile(_profiles[nextIndex - 1]);
+                }
+
+                if (GUILayout.Button("New", GUILayout.Width(46)))
+                {
+                    StartNewWorkingCopy();
+                }
+            }
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                GUILayout.Space(EditorGUIUtility.labelWidth);
+                using (new EditorGUI.DisabledScope(_activeProfile == null || !HasUnsavedChanges()))
+                {
+                    if (GUILayout.Button("Save")) SaveWorkingCopy();
+                }
+
+                if (GUILayout.Button("Save As...")) SaveWorkingCopyAs();
+
+                using (new EditorGUI.DisabledScope(_activeProfile == null))
+                {
+                    if (GUILayout.Button("Locate")) LocateActiveProfile();
+                }
+            }
+
+            if (HasUnsavedChanges())
+            {
+                EditorGUILayout.LabelField(
+                    _activeProfile != null
+                        ? "Configuration has unsaved changes."
+                        : "Working copy is not saved as a configuration.",
+                    EditorStyles.miniLabel);
+            }
+            else
+            {
+                EditorGUILayout.LabelField(
+                    "Switch from the list, or double-click a configuration asset to start work.",
+                    EditorStyles.miniLabel);
+            }
+        }
+
+        private void StartNewWorkingCopy()
+        {
+            if (!ResolveUnsavedChanges()) return;
+
+            _activeProfile = null;
+            _folder = DefaultFolder;
+            _excludeFolders = "";
+            _excludeMaterials = new Material[0];
+            _atlasTexture = null;
+            _atlasMaterial = null;
+            _includeMaterials = new Material[0];
+            _workingCopyDirty = false;
+            ClearStartScanCache();
+            EditorPrefs.DeleteKey(LastProfileKey);
+            Repaint();
+        }
+
+        private bool TrySwitchProfile(PolyXManifestProfile profile)
+        {
+            if (profile == null || profile == _activeProfile) return profile != null;
+            if (!ResolveUnsavedChanges()) return false;
+
+            ApplyProfile(profile);
+            return true;
+        }
+
+        private void ApplyProfile(PolyXManifestProfile profile)
+        {
+            _activeProfile = profile;
+            _folder = profile.folder ?? DefaultFolder;
+            _excludeFolders = profile.excludeFolders ?? "";
+            _excludeMaterials = CloneArray(profile.excludeMaterials);
+            _atlasTexture = profile.atlasTexture;
+            _atlasMaterial = profile.atlasMaterial;
+            _includeMaterials = CloneArray(profile.includeMaterials);
+            _workingCopyDirty = false;
+            RememberProfile(profile);
+            ScheduleStartScan();
+            Repaint();
+        }
+
+        private void CaptureWorkingCopy(PolyXManifestProfile profile)
+        {
+            profile.folder = _folder ?? "";
+            profile.excludeFolders = _excludeFolders ?? "";
+            profile.excludeMaterials = CloneArray(_excludeMaterials);
+            profile.atlasTexture = _atlasTexture;
+            profile.atlasMaterial = _atlasMaterial;
+            profile.includeMaterials = CloneArray(_includeMaterials);
+        }
+
+        private bool SaveWorkingCopy()
+        {
+            if (_activeProfile == null) return SaveWorkingCopyAs();
+
+            Undo.RecordObject(_activeProfile, "Save PolyX Configuration");
+            CaptureWorkingCopy(_activeProfile);
+            EditorUtility.SetDirty(_activeProfile);
+            AssetDatabase.SaveAssets();
+            _workingCopyDirty = false;
+            RememberProfile(_activeProfile);
+            Repaint();
+            return true;
+        }
+
+        private bool SaveWorkingCopyAs()
+        {
+            string activePath = _activeProfile != null ? AssetDatabase.GetAssetPath(_activeProfile) : "";
+            string directory = string.IsNullOrEmpty(activePath)
+                ? "Assets"
+                : Path.GetDirectoryName(activePath).Replace('\\', '/');
+            string defaultName = _activeProfile != null
+                ? _activeProfile.name + " Copy"
+                : "PolyX Manifest Configuration";
+
+            string path = EditorUtility.SaveFilePanelInProject(
+                "Save PolyX Configuration", defaultName, "asset",
+                "Choose where to save the reusable PolyX configuration.", directory);
+            if (string.IsNullOrEmpty(path)) return false;
+
+            UnityEngine.Object existingAsset = AssetDatabase.LoadMainAssetAtPath(path);
+            var profile = existingAsset as PolyXManifestProfile;
+            if (existingAsset != null && profile == null)
+            {
+                EditorUtility.DisplayDialog("PolyX",
+                    "The selected path is already used by another asset:\n" + path, "OK");
+                return false;
+            }
+
+            if (profile == null)
+            {
+                profile = CreateInstance<PolyXManifestProfile>();
+                CaptureWorkingCopy(profile);
+                AssetDatabase.CreateAsset(profile, path);
+            }
+            else
+            {
+                Undo.RecordObject(profile, "Overwrite PolyX Configuration");
+                CaptureWorkingCopy(profile);
+                EditorUtility.SetDirty(profile);
+            }
+
+            AssetDatabase.SaveAssets();
+            _activeProfile = profile;
+            _workingCopyDirty = false;
+            RefreshProfiles();
+            RememberProfile(profile);
+            Selection.activeObject = profile;
+            EditorGUIUtility.PingObject(profile);
+            Repaint();
+            return true;
+        }
+
+        private bool ResolveUnsavedChanges()
+        {
+            if (!HasUnsavedChanges()) return true;
+
+            string profileName = _activeProfile != null ? _activeProfile.name : "the new configuration";
+            int choice = EditorUtility.DisplayDialogComplex(
+                "Unsaved PolyX Configuration",
+                "Save changes to " + profileName + " before switching?",
+                "Save", "Cancel", "Discard");
+
+            if (choice == 0) return SaveWorkingCopy();
+            return choice == 2;
+        }
+
+        private bool HasUnsavedChanges()
+        {
+            if (_activeProfile == null) return _workingCopyDirty;
+            return _workingCopyDirty || !WorkingCopyMatches(_activeProfile);
+        }
+
+        private bool WorkingCopyMatches(PolyXManifestProfile profile)
+        {
+            return string.Equals(_folder ?? "", profile.folder ?? "", StringComparison.Ordinal) &&
+                   string.Equals(_excludeFolders ?? "", profile.excludeFolders ?? "", StringComparison.Ordinal) &&
+                   SameObjects(_excludeMaterials, profile.excludeMaterials) &&
+                   _atlasTexture == profile.atlasTexture &&
+                   _atlasMaterial == profile.atlasMaterial &&
+                   SameObjects(_includeMaterials, profile.includeMaterials);
+        }
+
+        private void LocateActiveProfile()
+        {
+            if (_activeProfile == null) return;
+            Selection.activeObject = _activeProfile;
+            EditorGUIUtility.PingObject(_activeProfile);
+        }
+
+        private void RefreshProfiles()
+        {
+            _profiles = AssetDatabase.FindAssets("t:PolyXManifestProfile")
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .Select(AssetDatabase.LoadAssetAtPath<PolyXManifestProfile>)
+                .Where(p => p != null)
+                .OrderBy(p => p.name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(AssetDatabase.GetAssetPath, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            _profileOptions = new string[_profiles.Count + 1];
+            _profileOptions[0] = "<New Configuration>";
+            for (int i = 0; i < _profiles.Count; i++)
+            {
+                string path = AssetDatabase.GetAssetPath(_profiles[i]);
+                _profileOptions[i + 1] = _profiles[i].name + "  (" + path + ")";
+            }
+        }
+
+        private void OnProjectChanged()
+        {
+            RefreshProfiles();
+            Repaint();
+        }
+
+        private void RestoreLastProfile()
+        {
+            string guid = EditorPrefs.GetString(LastProfileKey, "");
+            if (string.IsNullOrEmpty(guid)) return;
+
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            var profile = AssetDatabase.LoadAssetAtPath<PolyXManifestProfile>(path);
+            if (profile != null) ApplyProfile(profile);
+            else EditorPrefs.DeleteKey(LastProfileKey);
+        }
+
+        private static void RememberProfile(PolyXManifestProfile profile)
+        {
+            string path = profile != null ? AssetDatabase.GetAssetPath(profile) : "";
+            string guid = !string.IsNullOrEmpty(path) ? AssetDatabase.AssetPathToGUID(path) : "";
+            if (!string.IsNullOrEmpty(guid)) EditorPrefs.SetString(LastProfileKey, guid);
+        }
+
+        private void ClearStartScanCache()
+        {
+            _cachedAtlasPath = "";
+            _cachedStartValid = false;
+            _startScanPending = false;
+        }
+
+        private static T[] CloneArray<T>(T[] source)
+        {
+            return source != null ? (T[])source.Clone() : new T[0];
+        }
+
+        private static bool SameObjects<T>(T[] left, T[] right) where T : UnityEngine.Object
+        {
+            left = left ?? new T[0];
+            right = right ?? new T[0];
+            if (left.Length != right.Length) return false;
+            for (int i = 0; i < left.Length; i++)
+            {
+                if (left[i] != right[i]) return false;
+            }
+            return true;
+        }
+
+        private static string LastProfileKey => LastProfileKeyPrefix + Application.dataPath;
 
         private void Export()
         {

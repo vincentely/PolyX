@@ -120,5 +120,6 @@ Unity 回写  <--(result.json)----  ┘ 写 atlas.png + 重映射后的 FBX
 - **Phase B（已完成）**：`BatchProcessor::RunManifest`（[app/BatchProcessor.cpp](../app/BatchProcessor.cpp)）——读 request → 逐 FBX 加载 → **按 nodePath/名 把场景网格匹配到 manifest 条目、各用自己的贴图分析**（`UVAnalyzer::AnalyzeScene` 现接收 per-mesh 贴图数组）→ 单张共享图集 → 逐网格重映射 UV、只对已合图的网格重指材质 → 镜像输出 FBX → 写 `result.json`。CLI：`PolyX <request.json>`，输出到 `<exe目录>/output/`。验证：PetScene 33 FBX → 2048×2048，33 ok，0 mismatch；折叠（folder）模式与单测仍绿。
   - **多材质 / submesh 已支持**：按多边形材质索引分别用 `textures[m]` 分析、各自重映射、合进同一图集；缺贴图的槽保持原样。匹配不到的网格保持原样（不改 UV、不重指材质）。
 - **Phase A（Unity 侧）**：工程内 `Assets/Game/Script/Editor/PolyXManifestExporter.cs`（菜单 Tools › PolyX › Manifest Exporter）。全量：扫描 FBX 目录 → `polyx_manifest.json`。增量：面板下方 **Atlas Texture** + 可选 **Atlas Material** + **Include Materials** → **Scan & Build JSON** → 从材质反查 FBX、反向扫描算 8×8 追加点、写 `polyx_incremental.json`。未选 Atlas Material 时不改输出 FBX 的材质名。
+  - **可复用配置**：同时放入 `PolyXManifestProfile.cs` 后，可把扫描目录、排除项、图集和增量材质保存为项目内 `.asset` 配置。窗口顶部支持下拉切换、保存、另存和定位；双击配置资产会直接打开工具并载入该配置。最近使用的配置按用户/工程记忆，团队共享则提交 `.asset` 及其 `.meta`。
 - **增量（C++）**：`RunManifest` 支持 `mode=incremental`；加载目标图、校验起点、内容匹配复用或空位装箱；失败不写产物。
 - **回写（手动）**：把 `output_<目录名>/` 覆盖回工程对应目录，新建材质指向 `atlas.png` 并指给这些 mesh。当前不做自动回写（`result.json` 仅供参考，可忽略）。
